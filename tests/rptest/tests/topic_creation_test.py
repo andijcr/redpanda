@@ -446,7 +446,7 @@ class CreateTopicUpgradeTest(RedpandaTest):
     def setUp(self):
         self.installer.install(
             self.redpanda.nodes,
-            (22, 2, 7),
+            (22, 2),
         )
         self.redpanda.start()
 
@@ -479,10 +479,7 @@ class CreateTopicUpgradeTest(RedpandaTest):
         assert described['redpanda.remote.read'] == ('true', 'DEFAULT_CONFIG')
 
         # Upgrade to Redpanda latest
-        self.installer.install(
-            self.redpanda.nodes,
-            RedpandaInstaller.HEAD,
-        )
+        self.installer.install(self.redpanda.nodes, (22, 3))
         self.redpanda.restart_nodes(self.redpanda.nodes)
 
         # Wait for properties migration to run
@@ -568,7 +565,7 @@ class CreateTopicUpgradeTest(RedpandaTest):
 
         self.installer.install(
             self.redpanda.nodes,
-            RedpandaInstaller.HEAD,
+            (22, 3),
         )
 
         self.redpanda.restart_nodes(self.redpanda.nodes)
@@ -714,7 +711,7 @@ class CreateTopicUpgradeTest(RedpandaTest):
 
         self.installer.install(
             self.redpanda.nodes,
-            RedpandaInstaller.HEAD,
+            (22, 3),
         )
 
         self.redpanda.restart_nodes(self.redpanda.nodes)
