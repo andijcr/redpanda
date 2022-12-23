@@ -106,7 +106,7 @@ class ClusterBootstrapUpgrade(RedpandaTest):
     def setUp(self):
         # NOTE: `rpk redpanda admin brokers list` requires versions v22.1.x and
         # above.
-        self.OLDVER, self.OLDVER_STR = self.installer.install(
+        _, self.oldversion_str = self.installer.install(
             self.redpanda.nodes, (22, 2))
         set_seeds_for_cluster(self.redpanda, 3)
         super(ClusterBootstrapUpgrade, self).setUp()
@@ -161,7 +161,7 @@ class ClusterBootstrapUpgrade(RedpandaTest):
             return u_prev
 
         unique_versions = wait_for_num_versions(self.redpanda, 1)
-        assert self.OLDVER_STR in unique_versions, unique_versions
+        assert self.oldversion_str in unique_versions, unique_versions
 
         # Upgrade all but 1 node, verify cluster UUID is not created in 10s
         one_node = [self.redpanda.nodes[0]]
@@ -169,7 +169,7 @@ class ClusterBootstrapUpgrade(RedpandaTest):
         self.installer.install(but_one_node, (22, 3))
         self.redpanda.restart_nodes(but_one_node)
         unique_versions = wait_for_num_versions(self.redpanda, 2)
-        assert self.OLDVER_STR in unique_versions, unique_versions
+        assert self.oldversion_str in unique_versions, unique_versions
         try:
             wait_until(lambda: get_cluster_uuid() is not None,
                        timeout_sec=10,
@@ -182,5 +182,5 @@ class ClusterBootstrapUpgrade(RedpandaTest):
         self.installer.install(one_node, (22, 3))
         self.redpanda.restart_nodes(one_node)
         unique_versions = wait_for_num_versions(self.redpanda, 1)
-        assert self.OLDVER_STR not in unique_versions, unique_versions
+        assert self.oldversion_str not in unique_versions, unique_versions
         wait_until(lambda: get_cluster_uuid() is not None, timeout_sec=30)
