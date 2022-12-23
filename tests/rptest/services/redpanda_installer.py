@@ -434,6 +434,7 @@ class RedpandaInstaller:
         """
         Like above but expects the install lock to have been taken before
         calling.
+        version should be either a 3-tuple specific release, or RedpandaInstaller.HEAD
         """
         version_root = self.root_for_version(version)
 
