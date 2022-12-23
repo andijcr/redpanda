@@ -406,7 +406,7 @@ class RedpandaInstaller:
 
         # version can be HEAD, a specific release, or a release_line. first two will go through, last one will be converted to a specific release
         install_target = version
-        actual_version = version
+        actual_version = version if version != RedpandaInstaller.HEAD else self._head_version
         # requested a line, find the most recent release
         if version != RedpandaInstaller.HEAD and len(version) == 2:
             actual_version, is_head = self.latest_for_line(install_target)
