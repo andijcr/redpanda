@@ -7,9 +7,7 @@
 # the Business Source License, use of this software will be governed
 # by the Apache License, Version 2.0
 
-import os
 import time
-import datetime
 
 from rptest.utils.rpenv import sample_license
 from rptest.services.admin import Admin
@@ -22,12 +20,12 @@ from ducktape.errors import TimeoutError as DucktapeTimeoutError
 from ducktape.utils.util import wait_until
 from rptest.util import wait_until_result
 
-CURRENT_LOGICAL_VERSION = 8
+CURRENT_LOGICAL_VERSION = 9
 
 # The upgrade tests defined below rely on having a logical version lower than
 # CURRENT_LOGICAL_VERSION. For the sake of these tests, the exact version
 # shouldn't matter.
-OLD_VERSION = (22, 1)
+OLD_VERSION = (22, 3)
 
 
 class FeaturesTestBase(RedpandaTest):
@@ -234,7 +232,7 @@ class FeaturesMultiNodeUpgradeTest(FeaturesTestBase):
         assert initial_version < CURRENT_LOGICAL_VERSION, \
             f"downgraded logical version {initial_version}"
 
-        self.installer.install(self.redpanda.nodes, (23, 1))
+        self.installer.install(self.redpanda.nodes, RedpandaInstaller.HEAD)
 
         # Restart nodes one by one.  Version shouldn't increment until all three are done.
         self.redpanda.restart_nodes([self.redpanda.nodes[0]])
@@ -280,7 +278,7 @@ class FeaturesMultiNodeUpgradeTest(FeaturesTestBase):
         assert initial_version < CURRENT_LOGICAL_VERSION, \
             f"downgraded logical version {initial_version}"
 
-        self.installer.install(self.redpanda.nodes, (22, 2))
+        self.installer.install(self.redpanda.nodes, RedpandaInstaller.HEAD)
         # Restart nodes one by one.  Version shouldn't increment until all three are done.
         self.redpanda.restart_nodes([self.redpanda.nodes[0]])
         _ = wait_for_num_versions(self.redpanda, 2)
@@ -374,7 +372,7 @@ class FeaturesNodeJoinTest(RedpandaTest):
 
         # Pick a node to roleplay an old version of redpanda
         old_node = self.redpanda.nodes[-1]
-        self.installer.install([old_node], OLD_VERSION)
+        self.installer.install([old_node], (22, 1))
 
         # Start first three nodes
         self.redpanda.start(self.redpanda.nodes[0:-1])
@@ -397,7 +395,7 @@ class FeaturesNodeJoinTest(RedpandaTest):
             )
 
         # Restart it with a sufficiently recent version and join should succeed
-        self.installer.install([old_node], (22, 3))
+        self.installer.install([old_node], RedpandaInstaller.HEAD)
         self.redpanda.restart_nodes([old_node])
 
         # Timeout long enough for join retries & health monitor tick (registered
