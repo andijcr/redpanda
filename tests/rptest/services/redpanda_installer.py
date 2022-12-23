@@ -370,21 +370,26 @@ class RedpandaInstaller:
                 f"selecting HEAD={self._head_version} for {release_line=}")
             return (self._head_version, True)
 
-        line = [v for v in self._released_versions if release_line == v[0:2]]
-        assert len(
-            line
-        ) > 0, f"could not find a line for {release_line=} in {self._released_versions=}"
+        versions_in_line = [
+            v for v in self._released_versions if release_line == v[0:2]
+        ]
+        assert len(versions_in_line) > 0,\
+            f"could not find a line for {release_line=} in {self._released_versions=}"
 
         # Only checks these many version before giving up. one missing version is fine in a transient state,
         # but more would indicate a systemic issues in package download
-        for v in line[0:2]:
+        for v in versions_in_line[0:2]:
             # check actual availability
             if self._avail_for_download(v):
                 self._redpanda.logger.info(
                     f"selecting {v=} for {release_line=}")
                 return (v, False)
+            else:
+                self._redpanda.logger.warn(
+                    f"skipping {v=} for {release_line=} because it's not available for downloading"
+                )
 
-        assert False, f"no downloadable versions in {line[0:2]} for {release_line=}"
+        assert False, f"no downloadable versions in {versions_in_line[0:2]} for {release_line=}"
 
     def install(self, nodes, version: typing.Union[str, tuple[int, int],
                                                    tuple[int, int, int]]):
