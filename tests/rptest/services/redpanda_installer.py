@@ -383,7 +383,7 @@ class RedpandaInstaller:
                 self._redpanda.logger.info(
                     f"selecting {v=} for {release_line=}")
                 return (v, False)
-        # TODO raise? or return None?
+
         assert False, f"no downloadable versions in {line[0:2]} for {release_line=}"
 
     def install(self, nodes, version: typing.Union[str, tuple[int, int],
