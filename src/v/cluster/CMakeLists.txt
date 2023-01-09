@@ -163,4 +163,5 @@ v_cc_library(
     v::cloud_storage
     v::features
   )
+target_precompile_headers(v_cluster PUBLIC types.h)
 add_subdirectory(tests)
