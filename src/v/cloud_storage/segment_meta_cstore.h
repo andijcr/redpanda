@@ -25,6 +25,9 @@
 
 namespace cloud_storage {
 
+struct share_frame_t {};
+inline constexpr auto share_frame = share_frame_t{};
+
 template<class value_t, class decoder_t>
 class segment_meta_frame_const_iterator
   : public boost::iterator_facade<
@@ -38,7 +41,7 @@ class segment_meta_frame_const_iterator
     using self_t = segment_meta_frame_const_iterator<value_t, decoder_t>;
 
 public:
-    /// Create iterator that points to the begining
+    /// Create iterator that points to the beginning
     explicit segment_meta_frame_const_iterator(
       decoder_t decoder,
       const std::array<value_t, buffer_depth>& head,
@@ -58,7 +61,22 @@ public:
 
     uint32_t index() const { return _pos; }
 
+    auto clone() -> self_t { return {share_frame, *this}; }
+
 private:
+    segment_meta_frame_const_iterator(
+      share_frame_t, segment_meta_frame_const_iterator& oth)
+      : _read_buf{oth._read_buf}
+      , _head{oth._head}
+      , _decoder{[&]() -> std::optional<decoder_t> {
+          if (oth._decoder.has_value()) {
+              return decoder_t{&(oth._decoder.value())};
+          }
+          return std::nullopt;
+      }()}
+      , _pos{oth._pos}
+      , _size{oth._size} {}
+
     const value_t& dereference() const {
         auto ix = _pos & index_mask;
         return _read_buf.at(ix);
@@ -91,9 +109,6 @@ private:
     uint32_t _pos{0};
     uint32_t _size{0};
 };
-
-struct share_frame_t {};
-inline constexpr auto share_frame = share_frame_t{};
 
 template<class value_t, auto delta_alg_instance = details::delta_xor{}>
 class segment_meta_column_frame
@@ -440,7 +455,33 @@ public:
     // Current index
     uint32_t index() const { return _ix_column; }
 
+    auto clone() -> self_t { return {share_frame, *this}; }
+
 private:
+    // clone constructor
+    segment_meta_column_const_iterator(
+      share_frame_t, segment_meta_column_const_iterator& oth)
+      : _snapshot{[&] {
+          iter_list_t tmp;
+          for (auto& e : oth._snapshot) {
+              tmp.push_back(e.clone());
+          }
+          return tmp;
+      }()}
+      , _outer_it{std::next(
+          _snapshot.begin(),
+          std::distance(oth._snapshot.begin(), oth._outer_it))}
+      , _inner_it{[&] {
+          if (_outer_it == _snapshot.end()) {
+              return frame_iter_t{};
+          }
+          auto tmp = std::move(*_outer_it);
+          std::advance(tmp, oth._inner_it.index());
+          return tmp;
+      }()}
+      , _inner_end{}
+      , _ix_column{oth._ix_column} {}
+
     iter_list_t _snapshot;
     outer_iter_t _outer_it;
     frame_iter_t _inner_it{};
@@ -838,11 +879,9 @@ public:
 
     segment_meta_materializing_iterator() = default;
     segment_meta_materializing_iterator(
-      const segment_meta_materializing_iterator&)
-      = delete;
+      const segment_meta_materializing_iterator&);
     segment_meta_materializing_iterator&
-    operator=(const segment_meta_materializing_iterator&)
-      = delete;
+    operator=(const segment_meta_materializing_iterator&);
     segment_meta_materializing_iterator(segment_meta_materializing_iterator&&)
       = default;
     segment_meta_materializing_iterator&

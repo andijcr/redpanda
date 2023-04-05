@@ -748,6 +748,15 @@ public:
 
     bool equal(const impl& other) const { return _iters == other._iters; }
 
+    auto clone() -> segment_meta_materializing_iterator::impl {
+        // TODO reuse index to speedup sub clone operation
+        return impl{std::apply(
+          [](auto&... col) {
+              return column_store::iterators_t{col.clone()...};
+          },
+          _iters)};
+    }
+
 private:
     column_store::iterators_t _iters;
     mutable std::optional<segment_meta> _curr;
@@ -756,6 +765,17 @@ private:
 segment_meta_materializing_iterator::segment_meta_materializing_iterator(
   std::unique_ptr<impl> i)
   : _impl(std::move(i)) {}
+
+segment_meta_materializing_iterator::segment_meta_materializing_iterator(
+  segment_meta_materializing_iterator const& oth)
+  : segment_meta_materializing_iterator(
+    std::make_unique<impl>(oth._impl->clone())) {}
+auto segment_meta_materializing_iterator::operator=(
+  segment_meta_materializing_iterator const& oth)
+  -> segment_meta_materializing_iterator& {
+    _impl = std::make_unique<impl>(oth._impl->clone());
+    return *this;
+}
 
 segment_meta_materializing_iterator::~segment_meta_materializing_iterator() {}
 

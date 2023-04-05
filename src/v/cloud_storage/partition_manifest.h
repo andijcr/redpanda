@@ -10,11 +10,11 @@
 
 #pragma once
 
-#include "absl/container/btree_map.h"
 #include "cloud_storage/base_manifest.h"
 #include "cloud_storage/types.h"
 #include "model/metadata.h"
 #include "model/timestamp.h"
+#include "segment_meta_cstore.h"
 #include "serde/serde.h"
 #include "utils/tracking_allocator.h"
 
@@ -104,10 +104,9 @@ public:
     /// Segment key in the maifest
     using key = model::offset;
     using value = segment_meta;
-    using segment_map = util::mem_tracked::map_t<absl::btree_map, key, value>;
+    using segment_map = segment_meta_cstore;
     using replaced_segments_list = std::vector<lw_segment_meta>;
     using const_iterator = segment_map::const_iterator;
-    using const_reverse_iterator = segment_map::const_reverse_iterator;
 
     /// Generate segment name to use in the cloud
     static segment_name generate_remote_segment_name(const value& val);
@@ -142,8 +141,7 @@ public:
       : _ntp(std::move(ntp))
       , _rev(rev)
       , _mem_tracker(std::move(manifest_mem_tracker))
-      , _segments(
-          util::mem_tracked::map<absl::btree_map, key, value>(_mem_tracker))
+      , _segments()
       , _last_offset(lo)
       , _start_offset(so)
       , _last_uploaded_compacted_offset(lco)
@@ -164,7 +162,7 @@ public:
               "can't parse name of the segment in the manifest '{}'",
               nm.name);
             nm.meta.segment_term = maybe_key->term;
-            _segments.insert(std::make_pair(nm.meta.base_offset, nm.meta));
+            _segments.insert(nm.meta);
 
             if (
               nm.meta.base_offset >= _start_offset
@@ -270,9 +268,6 @@ public:
     /// Find element of the manifest by offset
     const_iterator find(model::offset o) const;
 
-    /// Get insert iterator for segments set
-    std::insert_iterator<segment_map> get_insert_iterator();
-
     /// Update manifest file from input_stream (remote set)
     ss::future<> update(ss::input_stream<char> is) override;
 
@@ -286,6 +281,7 @@ public:
     /// \param out output stream that should be used to output the json
     void serialize(std::ostream& out) const;
 
+    /*
     /// Compare two manifests for equality. Don't compare the mem_tracker.
     bool operator==(const partition_manifest& other) const {
         return _ntp == other._ntp && _rev == other._rev
@@ -297,7 +293,7 @@ public:
                && _insync_offset == other._insync_offset
                && _replaced == other._replaced;
     }
-
+*/
     manifest_type get_manifest_type() const override {
         return manifest_type::partition;
     };

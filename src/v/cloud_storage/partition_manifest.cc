@@ -222,7 +222,7 @@ partition_manifest::partition_manifest()
   : _ntp()
   , _rev()
   , _mem_tracker(ss::make_shared<util::mem_tracker>(""))
-  , _segments(util::mem_tracked::map<absl::btree_map, key, value>(_mem_tracker))
+  , _segments()
   , _last_offset(0) {}
 
 partition_manifest::partition_manifest(
@@ -234,7 +234,7 @@ partition_manifest::partition_manifest(
   , _mem_tracker(
       partition_mem_tracker ? partition_mem_tracker->create_child("manifest")
                             : ss::make_shared<util::mem_tracker>(""))
-  , _segments(util::mem_tracked::map<absl::btree_map, key, value>(_mem_tracker))
+  , _segments()
   , _last_offset(0) {}
 
 // NOTE: the methods that generate remote paths use the xxhash function
@@ -309,7 +309,7 @@ partition_manifest::get_start_kafka_offset() const {
     if (_start_offset != model::offset{}) {
         auto iter = _segments.find(_start_offset);
         if (iter != _segments.end()) {
-            auto delta = iter->second.delta_offset;
+            auto delta = iter->delta_offset;
             return _start_offset - delta;
         } else {
             throw std::runtime_error(fmt_with_ctx(
@@ -336,7 +336,7 @@ partition_manifest::segment_containing(kafka::offset o) const {
     // the target and step back. It is possible to have a segment that
     // doesn't have data batches. This scan has to skip segments like that.
     while (it != end()) {
-        if (it->second.base_kafka_offset() > o) {
+        if (it->base_kafka_offset() > o) {
             // The beginning of the manifest already has a base offset that
             // doesn't satisfy the query.
             if (it == begin()) {
@@ -346,17 +346,17 @@ partition_manifest::segment_containing(kafka::offset o) const {
             // 'o', return its previous segment.
             return std::prev(it);
         }
-        it = std::next(it);
+        ++it;
     }
     // All segments had base kafka offsets lower than 'o'.
     auto back = std::prev(it);
-    if (back->second.delta_offset_end != model::offset_delta{}) {
+    if (back->delta_offset_end != model::offset_delta{}) {
         // If 'prev' points to the last segment, it's not guaranteed that
         // the segment contains the required kafka offset. We need an extra
         // check using delta_offset_end. If the field is not set then we
         // will return the last segment. This is OK since delta_offset_end
         // will always be set for new segments.
-        if (back->second.next_kafka_offset() <= o) {
+        if (back->next_kafka_offset() <= o) {
             return end();
         }
     }
@@ -439,7 +439,7 @@ std::optional<segment_meta> partition_manifest::last_segment() const {
     if (_segments.empty()) {
         return std::nullopt;
     }
-    return _segments.rbegin()->second;
+    return _segments.last_segment();
 }
 
 bool partition_manifest::empty() const { return _segments.size() == 0; }
@@ -460,7 +460,7 @@ uint64_t partition_manifest::compute_cloud_log_size() const {
 
     return std::transform_reduce(
       start_iter, end(), uint64_t{0}, std::plus{}, [](const auto& seg) {
-          return seg.second.size_bytes;
+          return seg.size_bytes;
       });
 }
 
@@ -506,13 +506,13 @@ bool partition_manifest::advance_start_offset(model::offset new_start_offset) {
         }
 
         auto new_head_segment = std::prev(it);
-        if (new_head_segment->second.committed_offset < new_start_offset) {
+        if (new_head_segment->committed_offset < new_start_offset) {
             new_head_segment = std::next(new_head_segment);
         }
 
-        model::offset advanced_start_offset
-          = new_head_segment == end() ? new_start_offset
-                                      : new_head_segment->second.base_offset;
+        model::offset advanced_start_offset = new_head_segment == end()
+                                                ? new_start_offset
+                                                : new_head_segment->base_offset;
 
         if (previous_start_offset > advanced_start_offset) {
             vlog(
@@ -547,7 +547,7 @@ bool partition_manifest::advance_start_offset(model::offset new_start_offset) {
         // without a `cleanup_metadata` command in between to trim the list of
         // segments.
         for (auto it = previous_head_segment; it != new_head_segment; ++it) {
-            subtract_from_cloud_log_size(it->second.size_bytes);
+            subtract_from_cloud_log_size(it->size_bytes);
         }
 
         return true;
@@ -583,9 +583,9 @@ size_t partition_manifest::move_aligned_offset_range(
     while (it != _segments.end()
            // The segment is considered replaced only if all its
            // offsets are covered by new segment's offset range
-           && it->second.base_offset >= begin_inclusive
-           && it->second.committed_offset <= end_inclusive) {
-        if (generate_remote_segment_name(it->second) == replacing_path) {
+           && it->base_offset >= begin_inclusive
+           && it->committed_offset <= end_inclusive) {
+        if (generate_remote_segment_name(*it) == replacing_path) {
             // The replacing segment shouldn't be exactly the same as the
             // one that we already have in the manifest. Attempt to re-add
             // same segment twice leads to data loss.
@@ -596,9 +596,9 @@ size_t partition_manifest::move_aligned_offset_range(
               replacing_segment);
             break;
         }
-        _replaced.push_back(lw_segment_meta::convert(it->second));
-        total_replaced_size += it->second.size_bytes;
-        it = _segments.erase(it);
+        _replaced.push_back(lw_segment_meta::convert(*it));
+        total_replaced_size += it->size_bytes;
+        vassert(false, "translate this:  it = _segments.erase(it);");
     }
 
     return total_replaced_size;
@@ -613,7 +613,7 @@ bool partition_manifest::add(
     }
     const auto total_replaced_size = move_aligned_offset_range(
       meta.base_offset, meta.committed_offset, meta);
-    auto [it, ok] = _segments.insert(std::make_pair(key, meta));
+    vassert(false, R"<>(translate this: auto [it, ok] = _segments.insert(meta);
     if (ok && it->second.ntp_revision == model::initial_revision_id{}) {
         it->second.ntp_revision = _rev;
     }
@@ -632,6 +632,8 @@ bool partition_manifest::add(
     }
 
     return ok;
+    )<>");
+    return {}; // TODO crutch
 }
 
 bool partition_manifest::add(
@@ -663,19 +665,20 @@ partition_manifest::truncate(model::offset starting_rp_offset) {
 partition_manifest partition_manifest::truncate() {
     partition_manifest removed(_ntp, _rev);
     for (auto it : _segments) {
-        if (it.second.committed_offset < _start_offset) {
-            removed.add(it.first, it.second);
+        if (it.committed_offset < _start_offset) {
+            removed.add(it.base_offset, it);
         }
     }
     for (auto s : removed._segments) {
-        _segments.erase(s.first);
+        vassert(false, "translate this: _segments.erase(s.first);");
     }
     if (_segments.empty()) {
         // start offset only makes sense if we have segments
         _start_offset = model::offset{};
         // NOTE: _last_offset should not be reset
     }
-    return removed;
+    vassert(false, "translate this: return removed;");
+    return {}; // TODO crutch
 }
 
 const partition_manifest::segment_meta*
@@ -684,7 +687,7 @@ partition_manifest::get(const partition_manifest::key& key) const {
     if (it == _segments.end()) {
         return nullptr;
     }
-    return &it->second;
+    return &(*it);
 }
 
 const partition_manifest::segment_meta*
@@ -700,15 +703,10 @@ partition_manifest::get(const segment_name& name) const {
 partition_manifest::const_iterator
 partition_manifest::find(model::offset o) const {
     auto it = _segments.lower_bound(o);
-    if (it == _segments.end() || it->second.base_offset != o) {
+    if (it == _segments.end() || it->base_offset != o) {
         return end();
     }
     return it;
-}
-
-std::insert_iterator<partition_manifest::segment_map>
-partition_manifest::get_insert_iterator() {
-    return std::inserter(_segments, _segments.begin());
 }
 
 //@formatter:off
@@ -990,14 +988,9 @@ struct partition_manifest_handler
               .metadata_size_hint = _metadata_size_hint.value_or(0)};
             if (_state == state::expect_segment_meta_key) {
                 if (!_segments) {
-                    _segments = std::make_unique<segment_map>(
-                      util::mem_tracked::map<
-                        absl::btree_map,
-                        partition_manifest::key,
-                        partition_manifest::value>(_manifest_mem_tracker));
+                    _segments = std::make_unique<segment_map>();
                 }
-                _segments->insert(
-                  std::make_pair(_segment_key.base_offset, _meta));
+                _segments->insert(_meta);
                 _state = state::expect_segment_path;
             } else {
                 if (!_replaced) {
@@ -1280,7 +1273,7 @@ void partition_manifest::update(partition_manifest_handler&& handler) {
         if (handler._start_offset == std::nullopt && !_segments.empty()) {
             // Backward compatibility. Old manifest format doesn't have
             // start_offset field. In this case we need to set it implicitly.
-            _start_offset = _segments.begin()->second.base_offset;
+            _start_offset = _segments.begin()->base_offset;
         }
     }
     if (handler._replaced) {
@@ -1518,7 +1511,7 @@ void partition_manifest::serialize_segments(
         // The method is called first time
         w.Key("segments");
         w.StartObject();
-        cursor->next_offset = _segments.begin()->second.base_offset;
+        cursor->next_offset = _segments.begin()->base_offset;
     }
     if (!_segments.empty()) {
         auto it = _segments.lower_bound(cursor->next_offset);
@@ -1538,7 +1531,7 @@ void partition_manifest::serialize_segments(
             // We hit the limit on number of serialized segment
             // metadata objects and 'it' points to the first segment
             // which is not serialized yet.
-            cursor->next_offset = it->second.base_offset;
+            cursor->next_offset = it->base_offset;
         }
     }
     if (cursor->next_offset == _last_offset && !_segments.empty()) {
@@ -1584,7 +1577,7 @@ partition_manifest::segment_containing(model::offset o) const {
     }
 
     it = std::prev(it);
-    if (it->second.base_offset <= o && it->second.committed_offset >= o) {
+    if (it->base_offset <= o && it->committed_offset >= o) {
         return it;
     }
 
@@ -1617,21 +1610,21 @@ partition_manifest::timequery(model::timestamp t) const {
         return std::nullopt;
     }
 
-    auto base_t = _segments.begin()->second.base_timestamp;
-    auto max_t = _segments.rbegin()->second.max_timestamp;
-    auto base_offset = _segments.begin()->second.base_offset;
-    auto max_offset = _segments.rbegin()->second.committed_offset;
+    auto base_t = _segments.begin()->base_timestamp;
+    auto max_t = _segments.last_segment().value().max_timestamp;
+    auto base_offset = _segments.begin()->base_offset;
+    auto max_offset = _segments.last_segment().value().committed_offset;
 
     // Fast handling of bounds/edge cases to simplify subsequent
     // arithmetic steps
     if (t < base_t) {
-        return _segments.begin()->second;
+        return *_segments.begin();
     } else if (t > max_t) {
         return std::nullopt;
     } else if (max_t == base_t) {
         // This is plausible in the case of a single segment with
         // a single batch using LogAppendTime.
-        return _segments.begin()->second;
+        return *_segments.begin();
     }
 
     // Single-offset case should have hit max_t==base_t above
@@ -1654,6 +1647,7 @@ partition_manifest::timequery(model::timestamp t) const {
     vlog(
       cst_log.debug, "timequery t={} offset guess {}", t, interpolated_offset);
 
+    vassert(false, R"<>( translate this:
     // 2. Convert offset guess into segment guess.  This is not a strictly
     // correct offset lookup, we just want something close.
     auto segment_iter = _segments.lower_bound(interpolated_offset);
@@ -1705,7 +1699,8 @@ partition_manifest::timequery(model::timestamp t) const {
             }
         }
         return segment_iter->second;
-    }
+    })<>";
+    return {};  // TODO clutch
 }
 
 } // namespace cloud_storage

@@ -260,7 +260,7 @@ public:
     // This c-tor creates shallow copy of the encoder.
     //
     // The underlying iobuf is shared which makes the operation
-    // relatively lightweiht. The signature is different from
+    // relatively lightweight. The signature is different from
     // copy c-tor on purpose. The 'other' object is modified
     // and not just copied. If the c-tor throws the 'other' is
     // not affected.
@@ -793,6 +793,12 @@ public:
       , _data(std::move(data))
       , _delta(delta) {}
 
+    explicit deltafor_decoder(deltafor_decoder* oth)
+      : _initial(oth->_initial)
+      , _total{oth->_total}
+      , _pos{oth->_pos}
+      , _data{oth->_data.share(oth->_data.bytes_left())}
+      , _delta{oth->_delta} {}
     using row_t = std::array<TVal, row_width>;
 
     /// Decode single row
