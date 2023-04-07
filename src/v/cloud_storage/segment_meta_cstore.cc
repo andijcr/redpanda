@@ -15,6 +15,7 @@
 #include "model/metadata.h"
 #include "model/timestamp.h"
 #include "utils/delta_for.h"
+#include "cloud_storage/logger.h"
 
 #include <bitset>
 #include <functional>
@@ -769,15 +770,23 @@ segment_meta_materializing_iterator::segment_meta_materializing_iterator(
 segment_meta_materializing_iterator::segment_meta_materializing_iterator(
   segment_meta_materializing_iterator const& oth)
   : segment_meta_materializing_iterator(
-    std::make_unique<impl>(oth._impl->clone())) {}
+    std::make_unique<impl>(oth._impl->clone())) {
+    vlog(cst_log.error, "clone iterator");
+}
 auto segment_meta_materializing_iterator::operator=(
   segment_meta_materializing_iterator const& oth)
   -> segment_meta_materializing_iterator& {
     _impl = std::make_unique<impl>(oth._impl->clone());
+    vlog(cst_log.error, "clone iterator");
     return *this;
 }
-
-segment_meta_materializing_iterator::~segment_meta_materializing_iterator() {}
+segment_meta_materializing_iterator::segment_meta_materializing_iterator(
+  segment_meta_materializing_iterator&&) noexcept = default;
+segment_meta_materializing_iterator&
+segment_meta_materializing_iterator::operator=(
+  segment_meta_materializing_iterator&&) noexcept = default;
+segment_meta_materializing_iterator::~segment_meta_materializing_iterator()
+  = default;
 
 const segment_meta& segment_meta_materializing_iterator::dereference() const {
     return _impl->dereference();

@@ -877,16 +877,14 @@ class segment_meta_materializing_iterator
 public:
     class impl;
 
-    segment_meta_materializing_iterator() = default;
     segment_meta_materializing_iterator(
       const segment_meta_materializing_iterator&);
     segment_meta_materializing_iterator&
     operator=(const segment_meta_materializing_iterator&);
-    segment_meta_materializing_iterator(segment_meta_materializing_iterator&&)
-      = default;
+    segment_meta_materializing_iterator(
+      segment_meta_materializing_iterator&&) noexcept;
     segment_meta_materializing_iterator&
-    operator=(segment_meta_materializing_iterator&&)
-      = default;
+    operator=(segment_meta_materializing_iterator&&) noexcept;
     explicit segment_meta_materializing_iterator(std::unique_ptr<impl>);
 
     ~segment_meta_materializing_iterator();
@@ -914,6 +912,8 @@ public:
 
     segment_meta_cstore();
     ~segment_meta_cstore();
+    segment_meta_cstore(segment_meta_cstore&&) noexcept;
+    segment_meta_cstore& operator=(segment_meta_cstore&&) noexcept;
 
     /// Return iterator
     const_iterator begin() const;

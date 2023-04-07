@@ -947,3 +947,44 @@ BOOST_AUTO_TEST_CASE(test_segment_meta_cstore_insert_replacements) {
       merged_result.begin(),
       merged_result.end()));
 }
+
+BOOST_AUTO_TEST_CASE(test_segment_meta_cstore_iterators_copy) {
+    auto manifest = generate_metadata(6997);
+    auto store = segment_meta_cstore{};
+    for (auto& m : manifest) {
+        store.insert(m);
+    }
+    [&]{
+        vlog(test.info, "ok");
+        auto it = store.begin();
+        auto end = store.end();
+        auto it_copy = it;
+        auto end_copy = end;
+        BOOST_REQUIRE(it != end);
+        BOOST_REQUIRE(it != end_copy);
+        BOOST_REQUIRE(end == end_copy);
+        for (; it != end_copy; ++it, ++it_copy) {
+            BOOST_REQUIRE(it == it_copy);
+            BOOST_REQUIRE_EQUAL(*it, *it_copy);
+        }
+        BOOST_REQUIRE(it_copy == end);
+    }();
+    [&]{
+        auto lower = random_generators::get_int(manifest.size() - 1);
+        auto upper = random_generators::get_int(lower, manifest.size() - 1);
+        auto it = std::next(store.begin(), lower);
+        auto end = std::next(store.begin(), upper);
+        auto it_copy = it;
+        auto end_alt = std::next(it, upper - lower);
+        BOOST_REQUIRE(end == end_alt);
+        BOOST_REQUIRE(it!=end);
+        for (; it != end; ++it, ++it_copy) {
+            BOOST_REQUIRE(it == it_copy);
+            BOOST_REQUIRE_EQUAL(*it, *it_copy);
+        }
+        BOOST_REQUIRE(it == end_alt);
+        BOOST_REQUIRE(it_copy == end_alt);
+        vlog(test.info, "ok");
+
+    }();
+}
