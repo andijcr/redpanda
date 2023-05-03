@@ -1531,7 +1531,7 @@ void partition_manifest::serialize(std::ostream& out) const {
 }
 
 ss::future<>
-partition_manifest::serialize(ss::output_stream<char>& output) const {
+partition_manifest::serialize_json(ss::output_stream<char>& output) const {
     iobuf serialized;
     iobuf_ostreambuf obuf(serialized);
     std::ostream os(&obuf);

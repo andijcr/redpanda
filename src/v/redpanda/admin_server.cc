@@ -4461,7 +4461,8 @@ ss::future<std::unique_ptr<ss::http::reply>> admin_server::get_manifest(
                         std::move(os),
                         std::move(part),
                         [](auto& os, auto& part) mutable {
-                            return part->serialize_manifest_to_output_stream(os)
+                            return part
+                              ->serialize_json_manifest_to_output_stream(os)
                               .finally([&os] { return os.close(); });
                         });
                   });

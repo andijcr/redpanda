@@ -312,7 +312,7 @@ public:
     /// by the caller until the returned future completes.
     ///
     /// \return a future that completes after serialization is done
-    ss::future<> serialize(ss::output_stream<char>& out) const;
+    ss::future<> serialize_json(ss::output_stream<char>& out) const;
 
     manifest_type get_manifest_type() const override {
         return manifest_type::partition;

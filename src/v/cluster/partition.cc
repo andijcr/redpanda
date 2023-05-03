@@ -907,7 +907,7 @@ void partition::set_topic_config(
     }
 }
 
-ss::future<> partition::serialize_manifest_to_output_stream(
+ss::future<> partition::serialize_json_manifest_to_output_stream(
   ss::output_stream<char>& output) {
     if (!_archival_meta_stm || !_cloud_storage_partition) {
         throw std::runtime_error(fmt::format(
@@ -920,7 +920,8 @@ ss::future<> partition::serialize_manifest_to_output_stream(
     // of time the manifest lock is held for.
     co_await ss::with_timeout(
       model::timeout_clock::now() + manifest_serialization_timeout,
-      _cloud_storage_partition->serialize_manifest_to_output_stream(output));
+      _cloud_storage_partition->serialize_json_manifest_to_output_stream(
+        output));
 }
 
 ss::future<std::error_code>
