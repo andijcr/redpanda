@@ -255,7 +255,9 @@ partition_manifest::partition_manifest(
 // backend and other S3 API implementations might benefit from that.
 
 remote_manifest_path generate_partition_manifest_path(
-  const model::ntp& ntp, model::initial_revision_id rev) {
+  const model::ntp& ntp,
+  model::initial_revision_id rev,
+  std::string_view suffix) {
     // NOTE: the idea here is to split all possible hash values into
     // 16 bins. Every bin should have lowest 28-bits set to 0.
     // As result, for segment names all prefixes are possible, but
@@ -265,14 +267,17 @@ remote_manifest_path generate_partition_manifest_path(
     constexpr uint32_t bitmask = 0xF0000000;
     auto path = ssx::sformat("{}_{}", ntp.path(), rev());
     uint32_t hash = bitmask & xxhash_32(path.data(), path.size());
-    return remote_manifest_path(
-      fmt::format("{:08x}/meta/{}_{}/manifest.json", hash, ntp.path(), rev()));
+    return remote_manifest_path(fmt::format(
+      "{:08x}/meta/{}_{}/manifest.{}", hash, ntp.path(), rev(), suffix));
 }
 
 remote_manifest_path partition_manifest::get_manifest_path() const {
-    return generate_partition_manifest_path(_ntp, _rev);
+    return generate_partition_manifest_path(_ntp, _rev, "binary");
 }
 
+remote_manifest_path partition_manifest::get_legacy_manifest_path() const {
+    return generate_partition_manifest_path(_ntp, _rev, "json");
+}
 const model::ntp& partition_manifest::get_ntp() const { return _ntp; }
 
 model::offset partition_manifest::get_last_offset() const {

@@ -189,6 +189,9 @@ public:
     /// Manifest object name in S3
     remote_manifest_path get_manifest_path() const override;
 
+    /// Manifest object name before feature::cloud_storage_manifest_format_v2
+    remote_manifest_path get_legacy_manifest_path() const;
+
     /// Get NTP
     const model::ntp& get_ntp() const;
 
