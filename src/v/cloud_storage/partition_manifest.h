@@ -300,7 +300,7 @@ public:
     /// Serialize manifest object
     ///
     /// \return asynchronous input_stream with the serialized json
-    ss::future<serialized_json_stream> serialize() const override;
+    ss::future<serialized_data_stream> serialize() const override;
 
     /// Serialize manifest object
     ///

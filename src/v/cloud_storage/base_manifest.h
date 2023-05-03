@@ -18,7 +18,7 @@
 #include <compare>
 
 namespace cloud_storage {
-struct serialized_json_stream {
+struct serialized_data_stream {
     ss::input_stream<char> stream;
     size_t size_bytes;
 };
@@ -39,7 +39,7 @@ public:
     /// Serialize manifest object
     ///
     /// \return asynchronous input_stream with the serialized json
-    virtual ss::future<serialized_json_stream> serialize() const = 0;
+    virtual ss::future<serialized_data_stream> serialize() const = 0;
 
     /// Manifest object name in S3
     virtual remote_manifest_path get_manifest_path() const = 0;

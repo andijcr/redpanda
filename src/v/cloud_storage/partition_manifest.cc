@@ -1487,7 +1487,7 @@ struct partition_manifest::serialization_cursor {
     bool epilogue_done{false};
 };
 
-ss::future<serialized_json_stream> partition_manifest::serialize() const {
+ss::future<serialized_data_stream> partition_manifest::serialize() const {
     auto iso = _insync_offset;
     iobuf serialized;
     iobuf_ostreambuf obuf(serialized);
@@ -1515,7 +1515,7 @@ ss::future<serialized_json_stream> partition_manifest::serialize() const {
           get_manifest_path()));
     }
     size_t size_bytes = serialized.size_bytes();
-    co_return serialized_json_stream{
+    co_return serialized_data_stream{
       .stream = make_iobuf_input_stream(std::move(serialized)),
       .size_bytes = size_bytes};
 }
