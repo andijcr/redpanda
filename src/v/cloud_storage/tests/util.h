@@ -480,7 +480,7 @@ std::vector<cloud_storage_fixture::expectation> make_imposter_expectations(
           .url = "/" + url().string(), .body = s.bytes});
     }
     std::stringstream ostr;
-    m.serialize(ostr);
+    m.serialize_json(ostr);
     results.push_back(cloud_storage_fixture::expectation{
       .url = "/" + m.get_manifest_path()().string(),
       .body = ss::sstring(ostr.str())});
@@ -536,7 +536,7 @@ std::vector<cloud_storage_fixture::expectation> make_imposter_expectations(
     }
     m.advance_insync_offset(m.get_last_offset());
     std::stringstream ostr;
-    m.serialize(ostr);
+    m.serialize_json(ostr);
     results.push_back(cloud_storage_fixture::expectation{
       .url = "/" + m.get_manifest_path()().string(),
       .body = ss::sstring(ostr.str())});

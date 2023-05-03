@@ -1520,7 +1520,7 @@ ss::future<serialized_json_stream> partition_manifest::serialize() const {
       .size_bytes = size_bytes};
 }
 
-void partition_manifest::serialize(std::ostream& out) const {
+void partition_manifest::serialize_json(std::ostream& out) const {
     serialization_cursor_ptr c = make_cursor(out);
     serialize_begin(c);
     while (!c->segments_done) {

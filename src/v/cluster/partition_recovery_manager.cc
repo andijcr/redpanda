@@ -310,7 +310,7 @@ ss::future<log_recovery_result> partition_downloader::download_log() {
     auto mat = co_await find_recovery_material();
     if (cst_log.is_enabled(ss::log_level::debug)) {
         std::stringstream ostr;
-        mat.partition_manifest.serialize(ostr);
+        mat.partition_manifest.serialize_json(ostr);
         vlog(
           _ctxlog.debug,
           "Partition manifest used for recovery: {}",

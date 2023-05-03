@@ -993,7 +993,7 @@ SEASTAR_THREAD_TEST_CASE(test_replaced_sname_format_version) {
       });
 
     std::stringstream sstr;
-    m.serialize(sstr);
+    m.serialize_json(sstr);
 
     vlog(test_log.info, "serialized: {}", sstr.str());
 

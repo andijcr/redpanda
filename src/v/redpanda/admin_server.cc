@@ -4213,7 +4213,7 @@ ss::future<ss::json::json_return_type> admin_server::sync_local_state_handler(
         vlog(logger.info, "Requested bucket syncup completed");
         if (result) {
             std::stringstream sts;
-            result->serialize(sts);
+            result->serialize_json(sts);
             vlog(logger.info, "Requested bucket syncup result {}", sts.str());
         } else {
             vlog(logger.info, "Requested bucket syncup result empty");
