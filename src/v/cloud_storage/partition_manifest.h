@@ -75,10 +75,7 @@ generate_partition_manifest_path(const model::ntp&, model::initial_revision_id);
 struct partition_manifest_accessor;
 
 /// Manifest file stored in S3
-class partition_manifest final
-  : public serde::
-      envelope<partition_manifest, serde::version<0>, serde::compat_version<0>>
-  , public base_manifest {
+class partition_manifest final : public base_manifest {
     friend struct partition_manifest_accessor;
 
 public:
@@ -86,7 +83,11 @@ public:
 
     /// Compact representation of the segment_meta
     /// that can be used to generate a segment path in S3
-    struct lw_segment_meta {
+    struct lw_segment_meta
+      : serde::envelope<
+          lw_segment_meta,
+          serde::version<0>,
+          serde::compat_version<0>> {
         model::initial_revision_id ntp_revision;
         model::offset base_offset;
         model::offset committed_offset;
@@ -372,6 +373,10 @@ public:
         return const_cast<partition_manifest&>(*this).serde_fields()
                == const_cast<partition_manifest&>(other).serde_fields();
     }
+
+    void from_iobuf(iobuf in);
+
+    iobuf to_iobuf();
 
 private:
     void subtract_from_cloud_log_size(size_t to_subtract);
