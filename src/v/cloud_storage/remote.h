@@ -188,7 +188,7 @@ public:
     /// \return future that returns success code
     ss::future<download_result> download_manifest(
       const cloud_storage_clients::bucket_name& bucket,
-      const remote_manifest_path& key,
+      const std::pair<manifest_format, remote_manifest_path>& format_key,
       base_manifest& manifest,
       retry_chain_node& parent);
 
@@ -207,9 +207,20 @@ public:
     /// \return future that returns success code
     ss::future<download_result> maybe_download_manifest(
       const cloud_storage_clients::bucket_name& bucket,
-      const remote_manifest_path& key,
+      const std::pair<manifest_format, remote_manifest_path>& format_key,
       base_manifest& manifest,
       retry_chain_node& parent);
+
+    /// \brief Try downloading manifests specified in keys until one is found.
+    /// this is to support multiple manifests formats at the same time.
+    /// Internally, this is a chain of maybe_download_manifest calls, with the
+    /// last one being download_manifest if !expect_missing_fallback
+    ss::future<download_result> try_download_manifests(
+      const cloud_storage_clients::bucket_name& bucket,
+      std::vector<std::pair<manifest_format, remote_manifest_path>> keys,
+      base_manifest& manifest,
+      retry_chain_node& parent,
+      bool expect_missing_fallback = false);
 
     /// \brief Upload manifest to the pre-defined S3 location
     ///
@@ -338,7 +349,7 @@ public:
 
     ss::future<download_result> do_download_manifest(
       const cloud_storage_clients::bucket_name& bucket,
-      const remote_manifest_path& key,
+      const std::pair<manifest_format, remote_manifest_path>& format_key,
       base_manifest& manifest,
       retry_chain_node& parent,
       bool expect_missing = false);

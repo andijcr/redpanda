@@ -41,7 +41,7 @@ public:
 
     /// Update manifest file from input_stream (remote set)
     ss::future<> update(ss::input_stream<char> is) override;
-    void update(const rapidjson::Document& is);
+    void do_update(const rapidjson::Document& is);
 
     /// Serialize manifest object
     ///

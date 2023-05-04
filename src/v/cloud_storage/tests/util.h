@@ -609,8 +609,8 @@ partition_manifest hydrate_manifest(
 
     partition_manifest m(manifest_ntp, manifest_revision);
     retry_chain_node rtc(never_abort, 30s, 200ms);
-    auto key = m.get_manifest_path();
-    auto res = api.download_manifest(bucket, key, m, rtc).get();
+    auto format_key = m.get_legacy_manifest_format_and_path();
+    auto res = api.download_manifest(bucket, format_key, m, rtc).get();
     BOOST_REQUIRE(res == cloud_storage::download_result::success);
     return m;
 }

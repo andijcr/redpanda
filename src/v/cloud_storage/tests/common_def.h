@@ -35,6 +35,10 @@ static const ss::sstring manifest_url = ssx::sformat( // NOLINT
   manifest_ntp.path(),
   manifest_revision());
 
+static const auto json_manifest_format_path = std::pair{
+  manifest_format::json,
+  remote_manifest_path(std::filesystem::path(manifest_url))};
+
 inline iobuf iobuf_deep_copy(const iobuf& i) {
     iobuf res;
     for (const auto& f : i) {

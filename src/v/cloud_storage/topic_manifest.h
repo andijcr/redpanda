@@ -61,10 +61,15 @@ public:
         return _topic_config;
     }
 
+    bool operator==(const topic_manifest& other) const noexcept {
+        return std::tie(_topic_config, _rev)
+               == std::tie(other._topic_config, other._rev);
+    }
+
 private:
     /// Update manifest content from json document that supposed to be generated
     /// from manifest.json file
-    void update(const topic_manifest_handler& handler);
+    void do_update(const topic_manifest_handler& handler);
 
     std::optional<manifest_topic_configuration> _topic_config;
     model::initial_revision_id _rev;

@@ -20,6 +20,7 @@
 #include "serde/serde.h"
 #include "utils/tracking_allocator.h"
 
+#include <seastar/core/iostream.hh>
 #include <seastar/core/shared_ptr.hh>
 
 #include <deque>
@@ -187,10 +188,16 @@ public:
     }
 
     /// Manifest object name in S3
-    remote_manifest_path get_manifest_path() const override;
+    std::pair<manifest_format, remote_manifest_path>
+    get_manifest_format_and_path() const override;
+
+    remote_manifest_path get_manifest_path() const override {
+        return get_legacy_manifest_format_and_path().second;
+    }
 
     /// Manifest object name before feature::cloud_storage_manifest_format_v2
-    remote_manifest_path get_legacy_manifest_path() const;
+    std::pair<manifest_format, remote_manifest_path>
+    get_legacy_manifest_format_and_path() const;
 
     /// Get NTP
     const model::ntp& get_ntp() const;
@@ -295,7 +302,12 @@ public:
     const_iterator find(model::offset o) const;
 
     /// Update manifest file from input_stream (remote set)
-    ss::future<> update(ss::input_stream<char> is) override;
+    ss::future<> update(
+      manifest_format serialization_format, ss::input_stream<char> is) override;
+
+    ss::future<> update(ss::input_stream<char> is) override {
+        return update(manifest_format::json, std::move(is));
+    }
 
     /// Serialize manifest object
     ///
@@ -370,16 +382,32 @@ public:
           _archive_clean_offset,
           _start_kafka_offset);
     }
+    auto serde_fields() const {
+        // this list excludes _mem_tracker, which is not serialized
+        return std::tie(
+          _ntp,
+          _rev,
+          _segments,
+          _replaced,
+          _last_offset,
+          _start_offset,
+          _last_uploaded_compacted_offset,
+          _insync_offset,
+          _cloud_log_size_bytes,
+          _archive_start_offset,
+          _archive_start_offset_delta,
+          _archive_clean_offset,
+          _start_kafka_offset);
+    }
 
     /// Compare two manifests for equality. Don't compare the mem_tracker.
     bool operator==(const partition_manifest& other) const {
-        return const_cast<partition_manifest&>(*this).serde_fields()
-               == const_cast<partition_manifest&>(other).serde_fields();
+        return serde_fields() == other.serde_fields();
     }
 
     void from_iobuf(iobuf in);
 
-    iobuf to_iobuf();
+    iobuf to_iobuf() const;
 
 private:
     void subtract_from_cloud_log_size(size_t to_subtract);
@@ -446,6 +474,8 @@ private:
     model::offset _archive_clean_offset;
     // Start kafka offset set by the DeleteRecords request
     kafka::offset _start_kafka_offset;
+  friend auto
+partition_manifest_serde_from_partition_manifest(partition_manifest const& m);
 };
 
 } // namespace cloud_storage

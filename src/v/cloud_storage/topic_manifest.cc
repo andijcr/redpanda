@@ -173,7 +173,7 @@ topic_manifest::topic_manifest(
 topic_manifest::topic_manifest()
   : _topic_config(std::nullopt) {}
 
-void topic_manifest::update(const topic_manifest_handler& handler) {
+void topic_manifest::do_update(const topic_manifest_handler& handler) {
     if (handler._version != topic_manifest_version) {
         throw std::runtime_error(fmt_with_ctx(
           fmt::format,
@@ -286,7 +286,7 @@ ss::future<> topic_manifest::update(ss::input_stream<char> is) {
     topic_manifest_handler handler;
     if (reader.Parse(wrapper, handler)) {
         vlog(cst_log.debug, "Parsed successfully!");
-        topic_manifest::update(handler);
+        topic_manifest::do_update(handler);
     } else {
         rapidjson::ParseErrorCode e = reader.GetParseErrorCode();
         size_t o = reader.GetErrorOffset();

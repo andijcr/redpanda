@@ -1038,7 +1038,7 @@ void segment_meta_cstore::from_iobuf(iobuf in) {
     *_impl = serde::from_iobuf<segment_meta_cstore::impl>(std::move(in));
 }
 
-iobuf segment_meta_cstore::to_iobuf() {
+iobuf segment_meta_cstore::to_iobuf() const {
     impl tmp;
     for (auto s : *this) {
         tmp.append(s);

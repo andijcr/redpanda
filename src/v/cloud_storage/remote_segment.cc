@@ -420,7 +420,10 @@ ss::future<> remote_segment::do_hydrate_txrange() {
         // during compaction process. We don't need to try to download them
         // but we need to write empty tx manifest to the cache.
         auto res = co_await _api.maybe_download_manifest(
-          _bucket, manifest.get_manifest_path(), manifest, local_rtc);
+          _bucket,
+          manifest.get_manifest_format_and_path(),
+          manifest,
+          local_rtc);
 
         vlog(
           _ctxlog.debug,

@@ -271,12 +271,18 @@ remote_manifest_path generate_partition_manifest_path(
       "{:08x}/meta/{}_{}/manifest.{}", hash, ntp.path(), rev(), suffix));
 }
 
-remote_manifest_path partition_manifest::get_manifest_path() const {
-    return generate_partition_manifest_path(_ntp, _rev, "binary");
+std::pair<manifest_format, remote_manifest_path>
+partition_manifest::get_manifest_format_and_path() const {
+    return {
+      manifest_format::serde,
+      generate_partition_manifest_path(_ntp, _rev, "binary")};
 }
 
-remote_manifest_path partition_manifest::get_legacy_manifest_path() const {
-    return generate_partition_manifest_path(_ntp, _rev, "json");
+std::pair<manifest_format, remote_manifest_path>
+partition_manifest::get_legacy_manifest_format_and_path() const {
+    return {
+      manifest_format::json,
+      generate_partition_manifest_path(_ntp, _rev, "json")};
 }
 const model::ntp& partition_manifest::get_ntp() const { return _ntp; }
 
@@ -1374,31 +1380,45 @@ struct partition_manifest_handler
     }
 };
 
-ss::future<> partition_manifest::update(ss::input_stream<char> is) {
+ss::future<> partition_manifest::update(
+  manifest_format serialization_format, ss::input_stream<char> is) {
     iobuf result;
     auto os = make_iobuf_ref_output_stream(result);
     co_await ss::copy(is, os);
-    iobuf_istreambuf ibuf(result);
-    std::istream stream(&ibuf);
-    json::IStreamWrapper wrapper(stream);
-    rapidjson::Reader reader;
-    partition_manifest_handler handler(_mem_tracker);
 
-    if (reader.Parse(wrapper, handler)) {
-        partition_manifest::update(std::move(handler));
-    } else {
-        rapidjson::ParseErrorCode e = reader.GetParseErrorCode();
-        size_t o = reader.GetErrorOffset();
-        vlog(
-          cst_log.debug, "Failed to parse manifest: {}", result.hexdump(2048));
-        throw std::runtime_error(fmt_with_ctx(
-          fmt::format,
-          "Failed to parse partition manifest {}: {} at offset {}",
-          get_manifest_path(),
-          rapidjson::GetParseError_En(e),
-          o));
+    auto update_json = [&] {
+        iobuf_istreambuf ibuf(result);
+        std::istream stream(&ibuf);
+        json::IStreamWrapper wrapper(stream);
+        rapidjson::Reader reader;
+        partition_manifest_handler handler(_mem_tracker);
+
+        if (reader.Parse(wrapper, handler)) {
+            partition_manifest::update(std::move(handler));
+        } else {
+            rapidjson::ParseErrorCode e = reader.GetParseErrorCode();
+            size_t o = reader.GetErrorOffset();
+            vlog(
+              cst_log.debug,
+              "Failed to parse manifest: {}",
+              result.hexdump(2048));
+            throw std::runtime_error(fmt_with_ctx(
+              fmt::format,
+              "Failed to parse partition manifest {}: {} at offset {}",
+              get_manifest_path(),
+              rapidjson::GetParseError_En(e),
+              o));
+        }
+    };
+
+    switch (serialization_format) {
+    case manifest_format::json:
+        update_json();
+        break;
+    case manifest_format::serde:
+        from_iobuf(std::move(result));
+        break;
     }
-    co_return;
 }
 
 void partition_manifest::update(partition_manifest_handler&& handler) {
@@ -1488,32 +1508,7 @@ struct partition_manifest::serialization_cursor {
 };
 
 ss::future<serialized_data_stream> partition_manifest::serialize() const {
-    auto iso = _insync_offset;
-    iobuf serialized;
-    iobuf_ostreambuf obuf(serialized);
-    std::ostream os(&obuf);
-    serialization_cursor_ptr c = make_cursor(os);
-    serialize_begin(c);
-    while (!c->segments_done) {
-        serialize_segments(c);
-        co_await ss::maybe_yield();
-        if (iso != _insync_offset) {
-            throw std::runtime_error(fmt_with_ctx(
-              fmt::format,
-              "Manifest changed duing serialization, in sync offset moved from "
-              "{} to {}",
-              iso,
-              _insync_offset));
-        }
-    }
-    serialize_replaced(c);
-    serialize_end(c);
-    if (!os.good()) {
-        throw std::runtime_error(fmt_with_ctx(
-          fmt::format,
-          "could not serialize partition manifest {}",
-          get_manifest_path()));
-    }
+    auto serialized = to_iobuf();
     size_t size_bytes = serialized.size_bytes();
     co_return serialized_data_stream{
       .stream = make_iobuf_input_stream(std::move(serialized)),
@@ -1907,32 +1902,10 @@ partition_manifest::timequery(model::timestamp t) const {
     }
 }
 
-// this class is a serde-enabled version of partition_manifest. it's needed
-// because segment_meta_cstore is not copyable, and moving it would empty out
-// partition_manifest
-struct partition_manifest_serde
-  : public serde::envelope<
-      partition_manifest_serde,
-      serde::version<0>,
-      serde::compat_version<0>> {
-    model::ntp _ntp;
-    model::initial_revision_id _rev;
-
-    // _segments_serialized is already serialized via serde into a iobuf
-    // this is done because segment_meta_cstore is not a serde::envelope
-    iobuf _segments_serialized;
-
-    partition_manifest::replaced_segments_list _replaced;
-    model::offset _last_offset;
-    model::offset _start_offset;
-    model::offset _last_uploaded_compacted_offset;
-    model::offset _insync_offset;
-    size_t _cloud_log_size_bytes;
-    model::offset _archive_start_offset;
-    model::offset_delta _archive_start_offset_delta;
-    model::offset _archive_clean_offset;
-    kafka::offset _start_kafka_offset;
-};
+static_assert(
+    std::tuple_size_v<decltype(std::declval<partition_manifest const&>().serde_fields())> == std::tuple_size_v<decltype(std::declval<partition_manifest&>().serde_fields())>,
+        "ensure that serde_fields() and serde_fields() const capture the same fields"
+    );
 static_assert(
     std::tuple_size_v<decltype(serde::envelope_to_tuple(std::declval<partition_manifest_serde&>()))> == std::tuple_size_v<decltype(std::declval<partition_manifest&>().serde_fields())>,
         "partition_manifest_serde and partition_manifest must have the same number of fields, for serialization purposes"
@@ -1940,13 +1913,13 @@ static_assert(
 
 // construct partition_manifest_serde while keeping
 // std::is_aggregate<partition_manifest_serde> true
-static auto
-partition_manifest_serde_from_partition_manifest(partition_manifest& m)
+auto
+partition_manifest_serde_from_partition_manifest(partition_manifest const& m)
   -> partition_manifest_serde {
     partition_manifest_serde tmp{};
     // copy every field that is not segment_meta_cstore in
     // partition_manifest_serde, and uses to_iobuf for segment_meta_cstore
-    std::apply(
+/*    std::apply(
       [&](auto&... dest) {
           std::apply(
             [&]<typename... SField>(SField&... src) {
@@ -1964,6 +1937,20 @@ partition_manifest_serde_from_partition_manifest(partition_manifest& m)
             m.serde_fields());
       },
       serde::envelope_to_tuple(tmp));
+*/
+    tmp._ntp = m._ntp;
+    tmp._rev = m._rev;
+    tmp._segments_serialized = m._segments.to_iobuf();
+    tmp._replaced = m._replaced;
+    tmp._last_offset = m._last_offset;
+    tmp._start_offset = m._start_offset;
+    tmp._last_uploaded_compacted_offset = m._last_uploaded_compacted_offset;
+    tmp._insync_offset = m._insync_offset;
+    tmp._cloud_log_size_bytes = m._cloud_log_size_bytes;
+    tmp._archive_start_offset = m._archive_start_offset;
+    tmp._archive_start_offset_delta = m._archive_start_offset_delta;
+    tmp._archive_clean_offset = m._archive_clean_offset;
+    tmp._start_kafka_offset = m._start_kafka_offset;
     return tmp;
 }
 
@@ -1990,7 +1977,7 @@ static void partition_manifest_serde_to_partition_manifest(
       serde::envelope_to_tuple(src));
 }
 
-iobuf partition_manifest::to_iobuf() {
+iobuf partition_manifest::to_iobuf() const {
     return serde::to_iobuf(
       partition_manifest_serde_from_partition_manifest(*this));
 }

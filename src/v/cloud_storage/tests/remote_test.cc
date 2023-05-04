@@ -11,6 +11,7 @@
 #include "bytes/iobuf.h"
 #include "bytes/iobuf_parser.h"
 #include "bytes/iostream.h"
+#include "cloud_storage/base_manifest.h"
 #include "cloud_storage/offset_translation_layer.h"
 #include "cloud_storage/remote.h"
 #include "cloud_storage/remote_segment.h"
@@ -148,7 +149,7 @@ FIXTURE_TEST(test_download_manifest, remote_fixture) { // NOLINT
     auto res = remote.local()
                  .download_manifest(
                    cloud_storage_clients::bucket_name("bucket"),
-                   remote_manifest_path(std::filesystem::path(manifest_url)),
+                   json_manifest_format_path,
                    actual,
                    fib)
                  .get();
@@ -167,7 +168,7 @@ FIXTURE_TEST(test_download_manifest_timeout, remote_fixture) { // NOLINT
     auto res = remote.local()
                  .download_manifest(
                    cloud_storage_clients::bucket_name("bucket"),
-                   remote_manifest_path(std::filesystem::path(manifest_url)),
+                   json_manifest_format_path,
                    actual,
                    fib)
                  .get();
@@ -780,7 +781,7 @@ FIXTURE_TEST(test_filter_by_source, remote_fixture) { // NOLINT
     auto res = remote.local()
                  .download_manifest(
                    cloud_storage_clients::bucket_name("bucket"),
-                   remote_manifest_path(std::filesystem::path(manifest_url)),
+                   json_manifest_format_path,
                    actual,
                    child_rtc)
                  .get();
@@ -793,7 +794,7 @@ FIXTURE_TEST(test_filter_by_source, remote_fixture) { // NOLINT
     res = remote.local()
             .download_manifest(
               cloud_storage_clients::bucket_name("bucket"),
-              remote_manifest_path(std::filesystem::path(manifest_url)),
+              json_manifest_format_path,
               actual,
               other_rtc)
             .get();
@@ -807,7 +808,7 @@ FIXTURE_TEST(test_filter_by_source, remote_fixture) { // NOLINT
     res = remote.local()
             .download_manifest(
               cloud_storage_clients::bucket_name("bucket"),
-              remote_manifest_path(std::filesystem::path(manifest_url)),
+              json_manifest_format_path,
               actual,
               other_rtc)
             .get();
@@ -831,7 +832,7 @@ FIXTURE_TEST(test_filter_by_type, remote_fixture) { // NOLINT
     auto dl_res = remote.local()
                     .download_manifest(
                       cloud_storage_clients::bucket_name("bucket"),
-                      remote_manifest_path(std::filesystem::path(manifest_url)),
+                      json_manifest_format_path,
                       actual,
                       root_rtc)
                     .get();
@@ -867,7 +868,7 @@ FIXTURE_TEST(test_filter_lifetime_1, remote_fixture) { // NOLINT
     auto res = remote.local()
                  .download_manifest(
                    cloud_storage_clients::bucket_name("bucket"),
-                   remote_manifest_path(std::filesystem::path(manifest_url)),
+                   json_manifest_format_path,
                    actual,
                    child_rtc)
                  .get();

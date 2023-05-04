@@ -51,10 +51,10 @@ ss::future<> tx_range_manifest::update(ss::input_stream<char> is) {
     Document m;
     IStreamWrapper wrapper(stream);
     m.ParseStream(wrapper);
-    update(m);
+    do_update(m);
 }
 
-void tx_range_manifest::update(const rapidjson::Document& doc) {
+void tx_range_manifest::do_update(const rapidjson::Document& doc) {
     _ranges = fragmented_vector<model::tx_range>();
     auto version = doc["version"].GetInt();
     auto compat_version = doc["compat_version"].GetInt();
