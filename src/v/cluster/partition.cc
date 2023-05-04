@@ -15,6 +15,7 @@
 #include "cluster/logger.h"
 #include "cluster/tm_stm_cache_manager.h"
 #include "config/configuration.h"
+#include "features/feature_table.h"
 #include "model/fundamental.h"
 #include "model/metadata.h"
 #include "model/namespace.h"
@@ -849,6 +850,16 @@ static ss::future<bool> should_finalize(
 }
 
 ss::future<> partition::remove_remote_persistent_state(ss::abort_source& as) {
+    if (!_feature_table.local().is_active(
+          features::feature::cloud_storage_manifest_format_v2)) {
+        // this is meant to prevent uploading manifests with new format while
+        // the cluster is in a mixed state
+        vlog(
+          clusterlog.info,
+          "skipping erasing tiered storage objects for partition {}",
+          ntp());
+        co_return;
+    }
     // Backward compatibility: even if remote.delete is true, only do
     // deletion if the partition is in full tiered storage mode (this
     // excludes read replica clusters from deleting data in S3)
