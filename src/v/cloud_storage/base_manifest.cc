@@ -8,10 +8,9 @@
  * https://github.com/redpanda-data/redpanda/blob/master/licenses/rcl.md
  */
 
-
 #include "cloud_storage/base_manifest.h"
 
 namespace cloud_storage {
 
-	base_manifest::~base_manifest() = default;
+base_manifest::~base_manifest() = default;
 } // namespace cloud_storage

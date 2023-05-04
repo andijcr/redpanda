@@ -1902,6 +1902,33 @@ partition_manifest::timequery(model::timestamp t) const {
     }
 }
 
+// this class is a serde-enabled version of partition_manifest. it's needed
+// because segment_meta_cstore is not copyable, and moving it would empty out
+// partition_manifest
+struct partition_manifest_serde
+  : public serde::envelope<
+      partition_manifest_serde,
+      serde::version<0>,
+      serde::compat_version<0>> {
+    model::ntp _ntp;
+    model::initial_revision_id _rev;
+
+    // _segments_serialized is already serialized via serde into a iobuf
+    // this is done because segment_meta_cstore is not a serde::envelope
+    iobuf _segments_serialized;
+
+    partition_manifest::replaced_segments_list _replaced;
+    model::offset _last_offset;
+    model::offset _start_offset;
+    model::offset _last_uploaded_compacted_offset;
+    model::offset _insync_offset;
+    size_t _cloud_log_size_bytes;
+    model::offset _archive_start_offset;
+    model::offset_delta _archive_start_offset_delta;
+    model::offset _archive_clean_offset;
+    kafka::offset _start_kafka_offset;
+};
+
 static_assert(
     std::tuple_size_v<decltype(std::declval<partition_manifest const&>().serde_fields())> == std::tuple_size_v<decltype(std::declval<partition_manifest&>().serde_fields())>,
         "ensure that serde_fields() and serde_fields() const capture the same fields"
@@ -1913,68 +1940,47 @@ static_assert(
 
 // construct partition_manifest_serde while keeping
 // std::is_aggregate<partition_manifest_serde> true
-auto
+static auto
 partition_manifest_serde_from_partition_manifest(partition_manifest const& m)
   -> partition_manifest_serde {
     partition_manifest_serde tmp{};
     // copy every field that is not segment_meta_cstore in
     // partition_manifest_serde, and uses to_iobuf for segment_meta_cstore
-/*    std::apply(
-      [&](auto&... dest) {
-          std::apply(
-            [&]<typename... SField>(SField&... src) {
-                (
-                  [&] {
-                      if constexpr (std::
-                                      is_same_v<SField, segment_meta_cstore>) {
-                          dest = src.to_iobuf();
-                      } else {
-                          dest = src;
-                      }
-                  }(),
-                  ...);
-            },
-            m.serde_fields());
-      },
-      serde::envelope_to_tuple(tmp));
-*/
-    tmp._ntp = m._ntp;
-    tmp._rev = m._rev;
-    tmp._segments_serialized = m._segments.to_iobuf();
-    tmp._replaced = m._replaced;
-    tmp._last_offset = m._last_offset;
-    tmp._start_offset = m._start_offset;
-    tmp._last_uploaded_compacted_offset = m._last_uploaded_compacted_offset;
-    tmp._insync_offset = m._insync_offset;
-    tmp._cloud_log_size_bytes = m._cloud_log_size_bytes;
-    tmp._archive_start_offset = m._archive_start_offset;
-    tmp._archive_start_offset_delta = m._archive_start_offset_delta;
-    tmp._archive_clean_offset = m._archive_clean_offset;
-    tmp._start_kafka_offset = m._start_kafka_offset;
+
+    []<typename DT, typename ST, size_t... Is>(
+      DT dest_tuple, ST src_tuple, std::index_sequence<Is...>) {
+        (([&]<typename Src>(auto& dest, Src const& src) {
+             if constexpr (std::is_same_v<Src, segment_meta_cstore>) {
+                 dest = src.to_iobuf();
+             } else {
+                 dest = src;
+             }
+         }(std::get<Is>(dest_tuple), std::get<Is>(src_tuple))),
+         ...);
+    }(serde::envelope_to_tuple(tmp),
+      m.serde_fields(),
+      std::make_index_sequence<
+        std::tuple_size_v<decltype(m.serde_fields())>>());
     return tmp;
 }
 
 // almost the reverse of partition_manifest_serde_to_partition_manifest
 static void partition_manifest_serde_to_partition_manifest(
   partition_manifest_serde src, partition_manifest& dest) {
-    std::apply(
-      [&](auto&... src_fields) {
-          std::apply(
-            [&]<typename... DField>(DField&... dest_fields) {
-                (
-                  [&] {
-                      if constexpr (std::
-                                      is_same_v<DField, segment_meta_cstore>) {
-                          dest_fields.from_iobuf(std::move(src_fields));
-                      } else {
-                          dest_fields = std::move(src_fields);
-                      }
-                  }(),
-                  ...);
-            },
-            dest.serde_fields());
-      },
-      serde::envelope_to_tuple(src));
+    []<typename DT, typename ST, size_t... Is>(
+      DT dest_tuple, ST src_tuple, std::index_sequence<Is...>) {
+        (([&]<typename Dest>(Dest& dest, auto& src) {
+             if constexpr (std::is_same_v<Dest, segment_meta_cstore>) {
+                 dest.from_iobuf(std::move(src));
+             } else {
+                 dest = std::move(src);
+             }
+         }(std::get<Is>(dest_tuple), std::get<Is>(src_tuple))),
+         ...);
+    }(dest.serde_fields(),
+      serde::envelope_to_tuple(src),
+      std::make_index_sequence<
+        std::tuple_size_v<decltype(dest.serde_fields())>>());
 }
 
 iobuf partition_manifest::to_iobuf() const {

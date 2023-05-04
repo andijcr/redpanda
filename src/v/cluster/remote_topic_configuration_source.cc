@@ -39,22 +39,26 @@ download_topic_manifest(
 
     model::ns ns = cfg.cfg.tp_ns.ns;
     model::topic topic = cfg.cfg.tp_ns.tp;
-    cloud_storage::remote_manifest_path key
-      = cloud_storage::topic_manifest::get_topic_manifest_path(ns, topic);
+    std::
+      pair<cloud_storage::manifest_format, cloud_storage::remote_manifest_path>
+        format_key = {
+          cloud_storage::manifest_format::json,
+          cloud_storage::topic_manifest::get_topic_manifest_path(ns, topic)};
 
     auto res = co_await remote.download_manifest(
-      bucket, key, manifest, rc_node);
+      bucket, format_key, manifest, rc_node);
 
     if (res != cloud_storage::download_result::success) {
         vlog(
           clusterlog.warn,
           "Could not download topic manifest {} from bucket {}: {}",
-          key,
+          format_key.second,
           bucket,
           res);
-        co_return std::make_tuple(errc::topic_operation_error, key);
+        co_return std::make_tuple(
+          errc::topic_operation_error, format_key.second);
     }
-    co_return std::make_tuple(errc::success, key);
+    co_return std::make_tuple(errc::success, format_key.second);
 }
 
 ss::future<errc>

@@ -474,8 +474,6 @@ private:
     model::offset _archive_clean_offset;
     // Start kafka offset set by the DeleteRecords request
     kafka::offset _start_kafka_offset;
-  friend auto
-partition_manifest_serde_from_partition_manifest(partition_manifest const& m);
 };
 
 } // namespace cloud_storage

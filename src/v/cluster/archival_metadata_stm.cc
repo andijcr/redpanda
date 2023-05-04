@@ -718,9 +718,10 @@ ss::future<> archival_metadata_stm::handle_eviction() {
     auto backoff = config::shard_local_cfg().cloud_storage_initial_backoff_ms();
 
     retry_chain_node rc_node(_download_as, timeout, backoff);
-    auto res = co_await _cloud_storage_api.download_manifest(
+    auto res = co_await _cloud_storage_api.try_download_manifests(
       cloud_storage_clients::bucket_name{*bucket},
-      _manifest->get_manifest_path(),
+      {manifest.get_manifest_format_and_path(),
+       manifest.get_legacy_manifest_format_and_path()},
       manifest,
       rc_node);
 

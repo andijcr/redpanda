@@ -606,8 +606,12 @@ partition_downloader::find_recovery_material() {
       _ctxlog.info,
       "Downloading partition manifest {}",
       tmp.get_manifest_path());
-    auto res = co_await _remote->download_manifest(
-      _bucket, tmp.get_manifest_path(), tmp, _rtcnode);
+    auto res = co_await _remote->try_download_manifests(
+      _bucket,
+      {tmp.get_manifest_format_and_path(),
+       tmp.get_legacy_manifest_format_and_path()},
+      tmp,
+      _rtcnode);
     if (res == download_result::success) {
         recovery_mat.partition_manifest = std::move(tmp);
         co_return recovery_mat;

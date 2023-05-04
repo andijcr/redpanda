@@ -528,7 +528,10 @@ topic_recovery_service::download_manifest(ss::sstring path) {
     auto fib = make_rtc(_as, _config);
     try {
         auto download_r = co_await _remote.local().download_manifest(
-          _config.bucket, remote_manifest_path{path}, m, fib);
+          _config.bucket,
+          {manifest_format::json, remote_manifest_path{path}},
+          m,
+          fib);
         if (download_r != download_result::success) {
             auto error = recovery_error_ctx::make(
               fmt::format(
