@@ -11,6 +11,7 @@
 #include "bytes/iobuf.h"
 #include "bytes/iobuf_parser.h"
 #include "bytes/iostream.h"
+#include "cloud_storage/base_manifest.h"
 #include "cloud_storage/partition_manifest.h"
 #include "cloud_storage/types.h"
 #include "model/fundamental.h"
@@ -299,7 +300,11 @@ ss::logger test_log("partition_manifest_test");
 partition_manifest
 manifest_for(std::vector<std::pair<model::offset, kafka::offset>> o) {
     partition_manifest manifest;
-    manifest.update(make_manifest_stream(empty_manifest_json)).get();
+    manifest
+      .update(
+        cloud_storage::manifest_format::json,
+        make_manifest_stream(empty_manifest_json))
+      .get();
     for (int i = 0; i < o.size() - 1; i++) {
         segment_meta seg{
           .is_compacted = false,
@@ -426,7 +431,8 @@ SEASTAR_THREAD_TEST_CASE(test_segment_contains_by_kafka_offset) {
 
 SEASTAR_THREAD_TEST_CASE(test_segment_contains) {
     partition_manifest m;
-    m.update(make_manifest_stream(manifest_with_gaps)).get();
+    m.update(manifest_format::json, make_manifest_stream(manifest_with_gaps))
+      .get();
     BOOST_REQUIRE(m.segment_containing(model::offset{9}) == m.end());
     BOOST_REQUIRE(m.segment_containing(model::offset{90}) == m.end());
     BOOST_REQUIRE(
@@ -452,7 +458,9 @@ SEASTAR_THREAD_TEST_CASE(test_segment_contains) {
 // Test for the partition manifest tracked memory.
 SEASTAR_THREAD_TEST_CASE(test_manifest_mem_tracking) {
     partition_manifest empty_manifest;
-    empty_manifest.update(make_manifest_stream(empty_manifest_json)).get();
+    empty_manifest
+      .update(manifest_format::json, make_manifest_stream(empty_manifest_json))
+      .get();
 }
 
 SEASTAR_THREAD_TEST_CASE(test_manifest_type) {
@@ -539,7 +547,8 @@ SEASTAR_THREAD_TEST_CASE(test_manifest_path) {
 
 SEASTAR_THREAD_TEST_CASE(test_empty_manifest_update) {
     partition_manifest m;
-    m.update(make_manifest_stream(empty_manifest_json)).get();
+    m.update(manifest_format::json, make_manifest_stream(empty_manifest_json))
+      .get();
     auto path = m.get_manifest_path();
     BOOST_REQUIRE_EQUAL(
       path, "20000000/meta/test-ns/test-topic/42_0/manifest.json");
@@ -564,7 +573,9 @@ void require_equal_segment_meta(
 
 SEASTAR_THREAD_TEST_CASE(test_complete_manifest_update) {
     partition_manifest m;
-    m.update(make_manifest_stream(complete_manifest_json)).get();
+    m.update(
+       manifest_format::json, make_manifest_stream(complete_manifest_json))
+      .get();
     auto path = m.get_manifest_path();
     BOOST_REQUIRE_EQUAL(
       path, "60000000/meta/test-ns/test-topic/42_1/manifest.json");
@@ -655,7 +666,10 @@ SEASTAR_THREAD_TEST_CASE(test_complete_manifest_update) {
 
 SEASTAR_THREAD_TEST_CASE(test_max_segment_meta_update) {
     partition_manifest m;
-    m.update(make_manifest_stream(max_segment_meta_manifest_json)).get();
+    m.update(
+       manifest_format::json,
+       make_manifest_stream(max_segment_meta_manifest_json))
+      .get();
     auto path = m.get_manifest_path();
     BOOST_REQUIRE_EQUAL(
       path, "60000000/meta/test-ns/test-topic/42_1/manifest.json");
@@ -687,7 +701,10 @@ SEASTAR_THREAD_TEST_CASE(test_max_segment_meta_update) {
 SEASTAR_THREAD_TEST_CASE(test_no_size_bytes_segment_meta) {
     partition_manifest m;
     BOOST_REQUIRE_EXCEPTION(
-      m.update(make_manifest_stream(no_size_bytes_segment_meta)).get(),
+      m.update(
+         manifest_format::json,
+         make_manifest_stream(no_size_bytes_segment_meta))
+        .get(),
       std::runtime_error,
       [](std::runtime_error ex) {
           return std::string(ex.what()).find(
@@ -701,7 +718,9 @@ SEASTAR_THREAD_TEST_CASE(test_no_size_bytes_segment_meta) {
  */
 SEASTAR_THREAD_TEST_CASE(test_timestamps_segment_meta) {
     partition_manifest m;
-    m.update(make_manifest_stream(no_timestamps_segment_meta)).get();
+    m.update(
+       manifest_format::json, make_manifest_stream(no_timestamps_segment_meta))
+      .get();
     std::map<ss::sstring, partition_manifest::segment_meta> expected = {
       {"10-1-v1.log",
        partition_manifest::segment_meta{
@@ -716,7 +735,9 @@ SEASTAR_THREAD_TEST_CASE(test_timestamps_segment_meta) {
 
 SEASTAR_THREAD_TEST_CASE(test_metas_get_smaller) {
     partition_manifest m;
-    m.update(make_manifest_stream(segment_meta_gets_smaller_manifest_json))
+    m.update(
+       manifest_format::json,
+       make_manifest_stream(segment_meta_gets_smaller_manifest_json))
       .get();
     auto path = m.get_manifest_path();
     BOOST_REQUIRE_EQUAL(
@@ -760,7 +781,10 @@ SEASTAR_THREAD_TEST_CASE(test_metas_get_smaller) {
 SEASTAR_THREAD_TEST_CASE(test_no_closing_bracket_meta) {
     partition_manifest m;
     BOOST_REQUIRE_EXCEPTION(
-      m.update(make_manifest_stream(no_closing_bracket_segment_meta)).get(),
+      m.update(
+         manifest_format::json,
+         make_manifest_stream(no_closing_bracket_segment_meta))
+        .get(),
       std::runtime_error,
       [](std::runtime_error ex) {
           return std::string(ex.what()).find(
@@ -774,7 +798,9 @@ SEASTAR_THREAD_TEST_CASE(test_no_closing_bracket_meta) {
 
 SEASTAR_THREAD_TEST_CASE(test_fields_after_segments) {
     partition_manifest m;
-    m.update(make_manifest_stream(fields_after_segments_json)).get();
+    m.update(
+       manifest_format::json, make_manifest_stream(fields_after_segments_json))
+      .get();
     auto path = m.get_manifest_path();
     BOOST_REQUIRE_EQUAL(
       path, "60000000/meta/test-ns/test-topic/42_1/manifest.json");
@@ -800,7 +826,10 @@ SEASTAR_THREAD_TEST_CASE(test_fields_after_segments) {
 SEASTAR_THREAD_TEST_CASE(test_missing_manifest_field) {
     partition_manifest m;
     BOOST_REQUIRE_EXCEPTION(
-      m.update(make_manifest_stream(missing_last_offset_manifest_json)).get(),
+      m.update(
+         manifest_format::json,
+         make_manifest_stream(missing_last_offset_manifest_json))
+        .get(),
       std::runtime_error,
       [](std::runtime_error ex) {
           return std::string(ex.what()).find(
@@ -998,7 +1027,7 @@ SEASTAR_THREAD_TEST_CASE(test_replaced_sname_format_version) {
     vlog(test_log.info, "serialized: {}", sstr.str());
 
     partition_manifest m2;
-    m2.update(make_manifest_stream(sstr.str())).get();
+    m2.update(manifest_format::json, make_manifest_stream(sstr.str())).get();
     auto replaced = m2.replaced_segments();
     BOOST_REQUIRE_EQUAL(replaced.size(), 4);
     // size 0, inferred as v1
@@ -1704,7 +1733,9 @@ void scan_ts_segments(partition_manifest const& m) {
  */
 SEASTAR_THREAD_TEST_CASE(test_timequery_complete) {
     partition_manifest m;
-    m.update(make_manifest_stream(complete_manifest_json)).get();
+    m.update(
+       manifest_format::json, make_manifest_stream(complete_manifest_json))
+      .get();
 
     scan_ts_segments(m);
 }
@@ -1714,14 +1745,18 @@ SEASTAR_THREAD_TEST_CASE(test_timequery_complete) {
  */
 SEASTAR_THREAD_TEST_CASE(test_timequery_single_segment) {
     partition_manifest m;
-    m.update(make_manifest_stream(max_segment_meta_manifest_json)).get();
+    m.update(
+       manifest_format::json,
+       make_manifest_stream(max_segment_meta_manifest_json))
+      .get();
 
     scan_ts_segments(m);
 }
 
 SEASTAR_THREAD_TEST_CASE(test_timequery_gaps) {
     partition_manifest m;
-    m.update(make_manifest_stream(manifest_with_gaps)).get();
+    m.update(manifest_format::json, make_manifest_stream(manifest_with_gaps))
+      .get();
 
     // Timestamps within the segments and off the ends
     scan_ts_segments(m);
@@ -1780,7 +1815,8 @@ SEASTAR_THREAD_TEST_CASE(test_timequery_wide_range) {
 })json";
 
     partition_manifest m;
-    m.update(make_manifest_stream(wide_timestamps)).get();
+    m.update(manifest_format::json, make_manifest_stream(wide_timestamps))
+      .get();
 
     scan_ts_segments(m);
 }
@@ -1840,7 +1876,9 @@ SEASTAR_THREAD_TEST_CASE(test_timequery_overlaps) {
     })json";
 
     partition_manifest m;
-    m.update(make_manifest_stream(overlapping_timestamps)).get();
+    m.update(
+       manifest_format::json, make_manifest_stream(overlapping_timestamps))
+      .get();
 
     scan_ts_segments_general(m);
 }
@@ -1896,7 +1934,7 @@ SEASTAR_THREAD_TEST_CASE(test_timequery_out_of_order) {
     })json";
 
     partition_manifest m;
-    m.update(make_manifest_stream(raw)).get();
+    m.update(manifest_format::json, make_manifest_stream(raw)).get();
 
     // Before range: should get first segment
     expect_ts_segment(
@@ -1970,7 +2008,7 @@ SEASTAR_THREAD_TEST_CASE(test_generate_segment_name_format) {
     })json";
 
     partition_manifest m;
-    m.update(make_manifest_stream(raw)).get();
+    m.update(manifest_format::json, make_manifest_stream(raw)).get();
 
     {
         // old format with archival term
@@ -2023,7 +2061,9 @@ SEASTAR_THREAD_TEST_CASE(test_generate_segment_name_format) {
 
 SEASTAR_THREAD_TEST_CASE(test_cloud_log_size_updates) {
     partition_manifest manifest;
-    manifest.update(make_manifest_stream(empty_manifest_json)).get();
+    manifest
+      .update(manifest_format::json, make_manifest_stream(empty_manifest_json))
+      .get();
 
     BOOST_REQUIRE_EQUAL(manifest.cloud_log_size(), 0);
 
@@ -2090,7 +2130,10 @@ SEASTAR_THREAD_TEST_CASE(test_cloud_log_size_truncate_twice) {
     // even further.
 
     partition_manifest manifest;
-    manifest.update(make_manifest_stream(complete_manifest_json)).get();
+    manifest
+      .update(
+        manifest_format::json, make_manifest_stream(complete_manifest_json))
+      .get();
 
     BOOST_REQUIRE_EQUAL(manifest.cloud_log_size(), 15360);
 
@@ -2156,7 +2199,9 @@ SEASTAR_THREAD_TEST_CASE(test_deserialize_v1_manifest) {
 })json";
 
     partition_manifest manifest;
-    manifest.update(make_manifest_stream(v1_manifest_json)).get();
+    manifest
+      .update(manifest_format::json, make_manifest_stream(v1_manifest_json))
+      .get();
 
     BOOST_REQUIRE_EQUAL(manifest.cloud_log_size(), 11264);
 }

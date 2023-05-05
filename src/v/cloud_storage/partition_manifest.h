@@ -306,7 +306,7 @@ public:
       manifest_format serialization_format, ss::input_stream<char> is) override;
 
     ss::future<> update(ss::input_stream<char> is) override {
-        return update(manifest_format::json, std::move(is));
+        return update(manifest_format::serde, std::move(is));
     }
 
     /// Serialize manifest object
