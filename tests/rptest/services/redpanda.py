@@ -25,7 +25,7 @@ import uuid
 import zipfile
 import pathlib
 from enum import Enum, IntEnum
-from typing import Mapping, Optional, Tuple, Union, Any
+from typing import Mapping, NamedTuple, Optional, Tuple, Union, Any
 
 import yaml
 from ducktape.services.service import Service
@@ -3324,6 +3324,91 @@ class RedpandaService(RedpandaServiceBase):
                 raise RuntimeError(
                     f"Oversized controller log detected!  {max_length} records"
                 )
+
+    def raise_on_high_cpu_usage(self,
+                                high_threshold_percent: float = 50,
+                                measure_window_seconds: float = 1,
+                                grace_window_seconds: float = 5):
+        """
+        This method will raise an exception if cpu use (in percent) of any node/shard is above high_threshold_percent.
+        First measure is taken after measure_window_seconds (by default, after 1 second). If this fails, a second measure is done with a measure_window_seconds (by default, 5 seconds).
+        If the second measure is also above high_threshold_percent, an exception is raised.
+        """
+
+        # redpanda_cpu_busy_seconds measure how many second a shard has been busy (not idling). therfore a first list of values is captured and busy percentage is computed against it
+
+        # some typing to help
+        CpuBusySeconds = NamedTuple('CpuBusySeconds',
+                                    [('node', str), ('shard', str),
+                                     ('time', float),
+                                     ('cpu_busy_seconds', float)])
+        CpuUsage = NamedTuple('CpuUsage', [('node', str), ('shard', str),
+                                           ('cpu_usage_percent', float)])
+
+        def acquire_samples():
+            acquisition: list[CpuBusySeconds] = []
+            for node in self.nodes:
+                acquisition_t = time.time()
+                sample_raw = self.metrics_sample(
+                    "redpanda_cpu_busy_seconds_total", [node],
+                    MetricsEndpoint.PUBLIC_METRICS)
+                assert sample_raw is not None, f"{node.account.hostname} metrics sample is None"
+                for s in sample_raw.samples:
+                    acquisition.append(
+                        CpuBusySeconds(s.node.account.hostname,
+                                       s.labels['shard'], acquisition_t,
+                                       s.value))
+            sorted(acquisition, key=lambda x: (x.node, x.shard))
+            return acquisition
+
+        def get_usage(t0: CpuBusySeconds, t1: CpuBusySeconds):
+            assert (t0.node, t0.shard) == (
+                t1.node, t1.shard
+            ), f"t0.node ({t0.node}) and t0.shard ({t0.shard}) must be the same as t1.node ({t1.node}) and t1.shard ({t1.shard})"
+            assert t0.time < t1.time, f"t0.time ({t0.time}) must be less than t1.time ({t1.time})"
+            return CpuUsage(
+                t0.node, t0.shard,
+                100 * (t1.cpu_busy_seconds - t0.cpu_busy_seconds) /
+                (t1.time - t0.time))
+
+        # values for t0
+        t0 = acquire_samples()
+
+        # wait for measure_window_seconds and compute busy percent
+        time.sleep(measure_window_seconds)
+        t1 = acquire_samples()
+        assert len(t0) == len(
+            t1
+        ), f"different number of samples between t0 and t1: {t0=} vs {t1=}"
+        self.logger.debug(f"{t1=}")
+        d1 = [get_usage(*datum) for datum in zip(t0, t1)]
+        d1_above = [
+            datum for datum in d1
+            if datum.cpu_usage_percent > high_threshold_percent
+        ]
+        if len(d1_above) == 0:
+            # all good
+            return
+
+        self.logger.warn(
+            f"High CPU usage detected, checking again after {grace_window_seconds} seconds: {d1_above}"
+        )
+
+        # not good: wait for grace_window_seconds and check again
+        time.sleep(grace_window_seconds)
+        t2 = acquire_samples()
+        self.logger.debug(f"{t2=}")
+        assert len(t1) == len(
+            t2
+        ), f"different number of samples between t1 and t2: {t1=} vs {t2=}"
+        d2 = [get_usage(*datum) for datum in zip(t1, t2)]
+        d2_above = [
+            datum for datum in d2
+            if datum.cpu_usage_percent > high_threshold_percent
+        ]
+        assert len(
+            d2_above
+        ) == 0, f"High CPU usage detected in these shards {d2_above}"
 
 
 def make_redpanda_service(environment):
