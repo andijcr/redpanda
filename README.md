@@ -2,6 +2,9 @@
 
 from 
 https://gitlab.kitware.com/cmake/cmake/-/merge_requests/4145
+and
+https://github.com/Bagira80/cmake-modules/tree/master
+
 boosttest_discover_tests cmake function, runtime discovery of test cases
 
 usage of this repo, build and run all the tests:
