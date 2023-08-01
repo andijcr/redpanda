@@ -1,4 +1,5 @@
 include(CMakeParseArguments)
+include(BoostTestDiscoverTests)
 enable_testing()
 set(RUNNER "${PROJECT_SOURCE_DIR}/tools/cmake_test.py")
 option(RP_ENABLE_TESTS "Useful for disabling all tests" ON)
@@ -118,16 +119,47 @@ function (rp_test)
   endif()
 
   if(NOT skip_test)
-    add_test (
-      NAME ${RP_TEST_BINARY_NAME}
-      COMMAND bash -c "${RUNNER} --binary=$<TARGET_FILE:${RP_TEST_BINARY_NAME}> ${prepare_command} ${post_command} ${files_to_copy} ${RP_TEST_ARGS} "
-      )
-    set_tests_properties(${RP_TEST_BINARY_NAME} PROPERTIES LABELS "${RP_TEST_LABELS}")
-    if(RP_TEST_TIMEOUT)
-      set_tests_properties(${RP_TEST_BINARY_NAME}
-        PROPERTIES TIMEOUT ${RP_TEST_TIMEOUT})
+    # separate_arguments is needed to split "-- -c 1" into ["--","-c","1"] 
+    if(RP_TEST_BENCHMARK_TEST)
+      add_test (
+        NAME ${RP_TEST_BINARY_NAME}
+        COMMAND bash -c "${RUNNER} --binary=$<TARGET_FILE:${RP_TEST_BINARY_NAME}> ${prepare_command} ${post_command} ${files_to_copy} ${RP_TEST_ARGS} "
+        )
+      set_tests_properties(${RP_TEST_BINARY_NAME} PROPERTIES LABELS "${RP_TEST_LABELS}")
+      if(RP_TEST_TIMEOUT)
+        set_tests_properties(${RP_TEST_BINARY_NAME}
+          PROPERTIES TIMEOUT ${RP_TEST_TIMEOUT})
+      endif()
+      set_property(TEST ${RP_TEST_BINARY_NAME} PROPERTY ENVIRONMENT "${RP_TEST_ENV}")
+    else()
+      separate_arguments(RP_TEST_ARGS UNIX_COMMAND ${RP_TEST_ARGS})
+      add_custom_target("${RP_TEST_BINARY_NAME}_runner_base"
+        COMMAND ${RUNNER} --binary=$<TARGET_FILE:${RP_TEST_BINARY_NAME}> 
+        )
+      list(APPEND test_props LABELS "${RP_TEST_LABELS}" ENVIRONMENT "${RP_TEST_ENV}")
+      if(RP_TEST_TIMEOUT)
+        list(APPEND test_props TIMEOUT ${RP_TEST_TIMEOUT})
+      endif()
+      boosttest_discover_tests(
+        "${RP_TEST_BINARY_NAME}_runner_base"
+        TARGET_FILE $<TARGET_FILE:${RP_TEST_BINARY_NAME}>
+        EXTRA_ARGS ${prepare_command} ${post_command} ${files_to_copy} ${RP_TEST_ARGS}
+        TEST_PREFIX ${RP_TEST_BINARY_NAME}.
+        SKIP_DISABLED_TESTS
+        PROPERTIES ${test_props}
+        DISCOVERY_MODE PRE_TEST
+        )
     endif()
-    set_property(TEST ${RP_TEST_BINARY_NAME} PROPERTY ENVIRONMENT "${RP_TEST_ENV}")
+    #add_test (
+    #  NAME ${RP_TEST_BINARY_NAME}
+    #  COMMAND bash -c "${RUNNER} --binary=$<TARGET_FILE:${RP_TEST_BINARY_NAME}> ${prepare_command} ${post_command} ${files_to_copy} ${RP_TEST_ARGS} "
+    #  )
+    #set_tests_properties(${RP_TEST_BINARY_NAME} PROPERTIES LABELS "${RP_TEST_LABELS}")
+    #if(RP_TEST_TIMEOUT)
+    #  set_tests_properties(${RP_TEST_BINARY_NAME}
+    #    PROPERTIES TIMEOUT ${RP_TEST_TIMEOUT})
+    #endif()
+    #set_property(TEST ${RP_TEST_BINARY_NAME} PROPERTY ENVIRONMENT "${RP_TEST_ENV}")
   endif()
 endfunction()
 

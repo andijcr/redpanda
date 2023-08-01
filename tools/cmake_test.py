@@ -374,6 +374,15 @@ def main():
                             type=str,
                             action="append",
                             help='copy file to test execution directory')
+        parser.add_argument(
+            '--list_content',
+            type=str,
+            nargs='?',
+            const='HRF',
+            choices=['HRF', 'DOT'],
+            help=
+            'Lists the content of test tree - names of all test suites and test cases.'
+        )
         return parser
 
     parser = generate_options()
@@ -384,6 +393,11 @@ def main():
         exit(1)
     if not options.copy_file:
         options.copy_file = []
+    if options.list_content is not None:
+        exit(
+            subprocess.run(
+                [options.binary,
+                 f'--list_content={options.list_content}']).returncode)
 
     logger.setLevel(getattr(logging, options.log.upper()))
     logger.info("%s *args=%s" % (options, program_options))
