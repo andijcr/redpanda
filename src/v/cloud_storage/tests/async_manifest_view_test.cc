@@ -15,6 +15,10 @@
 #include "cloud_storage/tests/s3_imposter.h"
 #include "cloud_storage/tests/util.h"
 #include "cloud_storage/types.h"
+#include "manifest.bin.0.2249996641.0.2249993616.1677002790140.1681223608478.hh"
+#include "manifest.bin.2249996642.3456804257.2249993616.3456798131.1681223608480.1683812773442.hh"
+#include "manifest.bin.3456804258.4724554875.3456798131.4724545623.1683812773443.1686669618356.hh"
+#include "manifest.bin.hh"
 #include "model/fundamental.h"
 #include "model/metadata.h"
 #include "model/timeout_clock.h"
@@ -123,6 +127,14 @@ public:
         // No need to upload to S3
     }
 
+    void load_stm_manifest_from_image(std::span<const unsigned char> image) {
+        // Load the manifest from file
+        iobuf body;
+        body.append(image.data(), image.size());
+        // The stm_manifest is created with different ntp/rev
+        stm_manifest.from_iobuf(std::move(body));
+        // No need to upload to S3
+    }
     void put_spill_to_cache(const spillover_manifest& spm) {
         auto path = spm.get_manifest_path();
         auto stream = spm.serialize().get();
@@ -147,6 +159,16 @@ public:
         put_spill_to_cache(spm);
     }
 
+    void
+    load_spillover_manifest_from_image(std::span<const unsigned char> image) {
+        iobuf body;
+        body.append(image.data(), image.size());
+        // Try to use different ntp and rev
+        spillover_manifest spm(manifest_ntp, manifest_rev);
+        spm.from_iobuf(std::move(body));
+        upload_to_s3_imposter(spm);
+        put_spill_to_cache(spm);
+    }
     // Upload the manifest to the "cloud storage"
     void upload_to_s3_imposter(const partition_manifest& pm) {
         auto [in_stream, size_bytes] = pm.serialize().get();
@@ -1076,19 +1098,13 @@ FIXTURE_TEST(test_async_manifest_view_test_iter2, async_manifest_view_fixture) {
 }
 
 FIXTURE_TEST(test_async_manifest_view_repro, async_manifest_view_fixture) {
-    load_stm_manifest_from_file("/home/lazin/workspace/0_87/manifest.bin");
-    std::vector<ss::sstring> spills = {
-      "/home/lazin/workspace/0_87/"
-      "manifest.bin.0.2249996641.0.2249993616.1677002790140.1681223608478",
-      "/home/lazin/workspace/0_87/"
-      "manifest.bin.2249996642.3456804257.2249993616.3456798131.1681223608480."
-      "1683812773442",
-      "/home/lazin/workspace/0_87/"
-      "manifest.bin.3456804258.4724554875.3456798131.4724545623.1683812773443."
-      "1686669618356",
-    };
+    load_stm_manifest_from_image(get_manifest_bin());
+    auto spills = std::array{
+      get_manifest_bin_0_2249996641_0_2249993616_1677002790140_1681223608478(),
+      get_manifest_bin_2249996642_3456804257_2249993616_3456798131_1681223608480_1683812773442(),
+      get_manifest_bin_3456804258_4724554875_3456798131_4724545623_1683812773443_1686669618356()};
     for (const auto& p : spills) {
-        load_spillover_manifest_from_file(p);
+        load_spillover_manifest_from_image(p);
     }
     listen();
 

@@ -47,6 +47,10 @@ rp_test(
     cloud_storage_e2e_test.cc
     delete_records_e2e_test.cc
     async_manifest_view_test.cc
+    manifest.bin.cc
+    manifest.bin.0.2249996641.0.2249993616.1677002790140.1681223608478.cc
+    manifest.bin.2249996642.3456804257.2249993616.3456798131.1681223608480.1683812773442.cc
+    manifest.bin.3456804258.4724554875.3456798131.4724545623.1683812773443.1686669618356.cc
     read_replica_test.cc
   DEFINITIONS BOOST_TEST_DYN_LINK
   LIBRARIES
