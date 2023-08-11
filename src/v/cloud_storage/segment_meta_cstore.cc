@@ -268,7 +268,7 @@ public:
     column_store() = default;
 
     /// Add element to the store. The operation is transactional.
-    void append(const segment_meta& meta, bool append_hint=true) {
+    void append(const segment_meta& meta, bool append_hint = true) {
         auto ix = _base_offset.size();
 
         try {
@@ -285,10 +285,12 @@ public:
             vassert(false, "column_store bad_alloc during 'append' operation");
         }
 
-        if (append_hint &&
-          (ix
-            % static_cast<uint32_t>(::details::FOR_buffer_depth * sampling_rate))
-          == 0) {
+        if (
+          append_hint
+          && (ix
+              % static_cast<uint32_t>(
+                ::details::FOR_buffer_depth * sampling_rate))
+               == 0) {
             // At the beginning of every row we need to collect
             // a set of hints to speed up the subsequent random
             // reads.
@@ -365,7 +367,6 @@ public:
         // extract the end iterator for hints, to cover only the frames that
         // will be cloned
         auto last_hint_tosave = [&] {
-          return _hints.end();
             auto frame_it = _base_offset.get_frame_iterator_by_element_index(
               first_replacement_index);
             if (frame_it == _base_offset._frames.begin()) {
@@ -417,7 +418,7 @@ public:
             // append old segments with committed offset smaller than
             // replacement
             while (old_seg.committed_offset < replacement_base_offset) {
-                replacement_store.append(old_seg, false);
+                replacement_store.append(old_seg);
                 details::increment_all(old_segments_it);
                 if (old_segments_it == old_segments_end) {
                     break;
@@ -427,7 +428,7 @@ public:
             // old_segment_it points to first segment to replace
 
             // append replacement segment instead of the old one
-            replacement_store.append(replacement_meta, false);
+            replacement_store.append(replacement_meta);
 
             // skip over segments superseded by replacement_meta
             while (old_segments_it != old_segments_end) {
@@ -540,12 +541,17 @@ public:
     auto at_with_hint(
       const col_t& c, uint32_t ix, const std::optional<hint_vec_t>& h) const {
         vassert(h.has_value(), "Invalid access at index {}", ix);
-        try{
-        return c.at_index(
-          ix, std::get<static_cast<size_t>(col_index)>(h.value()));
-        }catch(std::out_of_range& e){
-          vlog(cst_log.error, "{} index {} Out of range error: {}", __PRETTY_FUNCTION__, ix, e.what());
-          throw;
+        try {
+            return c.at_index(
+              ix, std::get<static_cast<size_t>(col_index)>(h.value()));
+        } catch (std::out_of_range& e) {
+            vlog(
+              cst_log.error,
+              "{} index {} Out of range error: {}",
+              __PRETTY_FUNCTION__,
+              ix,
+              e.what());
+            throw;
         }
     }
 

@@ -1113,6 +1113,7 @@ FIXTURE_TEST(test_async_manifest_view_repro, async_manifest_view_fixture) {
     auto maybe_cursor = view.get_cursor(so).get();
     auto cursor = std::move(maybe_cursor.value());
     auto target = model::timestamp(1691456400000);
+    auto expected=std::optional<segment_meta>{};
     cloud_storage::for_each_manifest(
       std::move(cursor),
       [&](ssx::task_local_ptr<const cloud_storage::partition_manifest>
@@ -1120,14 +1121,28 @@ FIXTURE_TEST(test_async_manifest_view_repro, async_manifest_view_fixture) {
           for (const auto& m : *p) {
               if (m.base_timestamp <= target && target <= m.max_timestamp) {
                   vlog(test_log.info, "Segment {}", m);
-                  // actual.push_back(m);
+                  expected=m;
               }
           }
           return ss::stop_iteration::no;
       })
       .get();
 
+    BOOST_REQUIRE(expected.has_value());
+
     vlog(test_log.debug, "Query timestamp {}", target);
-    auto res = view.get_cursor(target).get();
-    BOOST_REQUIRE(res.has_failure() == false);
+    {
+        config::shard_local_cfg().storage_ignore_cstore_hints.set_value(false);
+        auto res = view.get_cursor(target).get();
+        BOOST_REQUIRE(res.has_failure());
+    }
+    {
+        config::shard_local_cfg().storage_ignore_cstore_hints.set_value(true);
+        auto res = view.get_cursor(target).get();
+        BOOST_REQUIRE(!res.has_failure());
+        auto manifest=res.value()->manifest();
+        auto found_it = manifest->find(expected->base_offset);
+        BOOST_REQUIRE(found_it != manifest->end());
+        BOOST_REQUIRE(*found_it == expected);
+    }
 }
