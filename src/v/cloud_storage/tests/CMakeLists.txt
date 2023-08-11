@@ -102,13 +102,16 @@ rp_test(
 
 # Fuzz test for segment_meta_cstore
 if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
-if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
   add_executable(segment_meta_cstore_fuzz_rpfixture segment_meta_cstore_fuzz.cc)
-  target_compile_options(segment_meta_cstore_fuzz_rpfixture PRIVATE -Og -fsanitize=address,undefined,fuzzer -fprofile-instr-generate -fcoverage-mapping)
-  target_link_libraries(segment_meta_cstore_fuzz_rpfixture v::segment_meta_cstore fmt::fmt -fsanitize=address,undefined,fuzzer -fprofile-instr-generate -fcoverage-mapping)
+  target_compile_options(segment_meta_cstore_fuzz_rpfixture PRIVATE -O2 -fsanitize=fuzzer -fprofile-instr-generate -fcoverage-mapping)
+  target_link_libraries(segment_meta_cstore_fuzz_rpfixture v::segment_meta_cstore fmt::fmt -fsanitize=fuzzer -fprofile-instr-generate -fcoverage-mapping)
   add_test (
     NAME segment_meta_cstore_fuzz_rpfixture
     COMMAND $<TARGET_FILE:segment_meta_cstore_fuzz_rpfixture> -max_total_time=30 -rss_limit_mb=8192
   )
-endif()
+
+  if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+    target_compile_options(segment_meta_cstore_fuzz_rpfixture PRIVATE -Og -fsanitize=address,undefined)
+    target_link_libraries(segment_meta_cstore_fuzz_rpfixture -fsanitize=address,undefined)
+  endif()
 endif()

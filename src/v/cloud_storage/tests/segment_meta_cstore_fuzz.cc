@@ -106,7 +106,7 @@ public:
     // base and committed offsets
     void replace_segment_clean(
       cloud_storage::segment_meta smeta,
-      uint16_t index,
+      size_t index,
       uint16_t num_of_replacements) {
         if (index >= reference.size()) {
             // just append
@@ -215,6 +215,29 @@ public:
         }
     }
 
+    auto compact(float idx_ratio, uint8_t n) {
+        if (reference.size() < 2) {
+            return;
+        }
+        auto [idx, last_idx_increment] = [&] {
+            if (reference.size() == 2) {
+                return std::pair(size_t{0}, size_t{1});
+            }
+
+            auto idx = size_t((reference.size() - 1) * idx_ratio);
+            auto last_idx_increment = std::clamp<size_t>(
+              n, 1, reference.size() - 1 - idx);
+            return std::pair(idx, last_idx_increment);
+        }();
+        auto idx_it = std::next(reference.begin(), idx);
+        auto last_it = std::next(idx_it, last_idx_increment);
+        auto new_segment = idx_it->second;
+        new_segment.is_compacted = true;
+        new_segment.committed_offset = last_it->second.committed_offset;
+
+        replace_segment_clean(new_segment, idx, last_idx_increment);
+    }
+
 public:
     /*
      * Check consistency of cstore with reference.
@@ -279,6 +302,11 @@ public:
         return ret;
     }
 
+    float read_unit_float() {
+        return float(read<uint16_t>())
+               / float(1 + std::numeric_limits<uint16_t>::max());
+    }
+
     // This produces a segment meta that do not respect invariants in
     // redpanda. the only invariant is base_offset < committed_offset
     // furthermore, base_offset is always the same, just a placeholer
@@ -312,8 +340,7 @@ public:
           .base_offset = base_offset,
           .committed_offset
           = base_offset
-            + std::max(model::offset{read<uint16_t>()}, model::offset{0})
-            + model::offset{1},
+            + std::max(model::offset{read<uint16_t>()}, model::offset{1}),
           .base_timestamp = {},
           .max_timestamp = {},
           .delta_offset = {},
@@ -406,7 +433,25 @@ struct deserialize_op {
     auto operator()(cstore_ops& ops) const { ops.deserialize(); }
 };
 
-using cstore_operation = std::variant<
+struct compact_op {
+    float seg_index_ratio{};
+    uint8_t n_compaction{};
+    void setup(Tape& tape) {
+        seg_index_ratio = tape.read_unit_float();
+        n_compaction = tape.read<uint8_t>();
+    }
+    auto operator()(cstore_ops& ops) const {
+        ops.compact(seg_index_ratio, n_compaction);
+    }
+};
+
+struct append_simple_segment_op {
+    cloud_storage::segment_meta smeta{};
+    void setup(Tape& tape) { smeta = tape.read_simplified_segment_meta(); }
+    auto operator()(cstore_ops& ops) const { ops.append_segment(smeta); }
+};
+
+using full_ops = std::variant<
   noop,
   self_move_op,
   append_segment_op,
@@ -420,6 +465,15 @@ using cstore_operation = std::variant<
   consume_reader_op,
   serialize_op,
   deserialize_op>;
+
+using simple_ops = std::variant<
+  noop,
+  append_simple_segment_op,
+  compact_op,
+  reset_reader_op,
+  consume_reader_op>;
+
+using cstore_operation = simple_ops;
 
 // SIN SECTION
 // this is a sections of ODR sins to appease the daemons of the linker
