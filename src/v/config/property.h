@@ -783,6 +783,8 @@ private:
  * A deprecated property only exposes metadata and does not expose a usable
  * value.
  */
+ // NOTEANDREA a deprecated property that alias another property?
+ // NOTEANDREA also, hook to print a warning?
 class deprecated_property : public property<ss::sstring> {
 public:
     deprecated_property(config_store& conf, std::string_view name)

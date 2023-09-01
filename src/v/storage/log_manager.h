@@ -97,7 +97,7 @@ struct log_config {
     // same as retention.bytes in kafka
     config::binding<std::optional<size_t>> retention_bytes;
     config::binding<std::chrono::milliseconds> compaction_interval;
-    // same as delete.retention.ms in kafka - default 1 week
+    // same as delete.retention.ms in kafka - default 1 week    // NOTEANDREA rename this? maybe not?
     config::binding<std::optional<std::chrono::milliseconds>> delete_retention;
     with_cache cache = with_cache::yes;
     batch_cache::reclaim_options reclaim_opts{

@@ -115,7 +115,7 @@ static constexpr std::array<std::string_view, 20> allowlist_topic_noop_confs = {
   "flush.ms",
   "flush.messages",
   "file.delete.delay.ms",
-  "delete.retention.ms",
+  "delete.retention.ms",      // NOTEANDREA nothing to do here, already noop
   "preallocate",
 };
 

@@ -681,7 +681,7 @@ configuration::configuration()
        .example = "compact,delete",
        .visibility = visibility::user},
       model::cleanup_policy_bitflags::deletion)
-  , transaction_coordinator_delete_retention_ms(
+  , transaction_coordinator_delete_retention_ms(  // NOTEANDREA should also this be renamed? probably not
       *this,
       "transaction_coordinator_delete_retention_ms",
       "delete segments older than this - default 1 week",
