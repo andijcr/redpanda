@@ -626,11 +626,13 @@ configuration::configuration()
       "Capacity (in number of txns) of an abort index segment",
       {.visibility = visibility::tunable},
       50000)
-  , delete_retention_ms(
+  , log_retention_ms(
       *this,
-      "delete_retention_ms",
+      "log_retention_ms",
       "delete segments older than this - default 1 week",
-      {.needs_restart = needs_restart::no, .visibility = visibility::user},
+      {.needs_restart = needs_restart::no,
+       .visibility = visibility::user,
+       .aliases = {"delete_retention_ms"}},
       10080min)
   , log_compaction_interval_ms(
       *this,
@@ -681,7 +683,8 @@ configuration::configuration()
        .example = "compact,delete",
        .visibility = visibility::user},
       model::cleanup_policy_bitflags::deletion)
-  , transaction_coordinator_delete_retention_ms(  // NOTEANDREA should also this be renamed? probably not
+  , transaction_coordinator_delete_retention_ms( // NOTEANDREA should also this
+                                                 // be renamed? probably not
       *this,
       "transaction_coordinator_delete_retention_ms",
       "delete segments older than this - default 1 week",

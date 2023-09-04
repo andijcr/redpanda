@@ -192,8 +192,9 @@ public:
             return read_replica_retention;
         }
 
-        // NOTEANDREA delete_retention_ms is already used as log_retention_ms prop in retention_duration()
-        return config::shard_local_cfg().delete_retention_ms();
+        // NOTEANDREA delete_retention_ms is already used as log_retention_ms
+        // prop in retention_duration()
+        return config::shard_local_cfg().log_retention_ms();
     }
 
     bool is_archival_enabled() const {

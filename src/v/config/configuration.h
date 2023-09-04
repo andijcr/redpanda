@@ -143,9 +143,10 @@ struct configuration final : public config_store {
     property<bool> enable_idempotence;
     property<bool> enable_transactions;
     property<uint32_t> abort_index_segment_size;
-    // NOTEANDREA create log_retention_ms with alias log.retention.ms to replace delete_retention_ms, delete_retention_ms becomes an alias and a deprecation message is printed
-    // same as log.retention.ms in kafka
-    retention_duration_property delete_retention_ms;
+    // NOTEANDREA create log_retention_ms with alias log.retention.ms to replace
+    // delete_retention_ms, delete_retention_ms becomes an alias and a
+    // deprecation message is printed same as log.retention.ms in kafka
+    retention_duration_property log_retention_ms;
     property<std::chrono::milliseconds> log_compaction_interval_ms;
     property<bool> log_disable_housekeeping_for_tests;
     // same as retention.size in kafka - TODO: size not implemented
