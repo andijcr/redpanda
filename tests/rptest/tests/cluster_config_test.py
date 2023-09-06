@@ -123,11 +123,17 @@ class ClusterConfigUpgradeTest(RedpandaTest):
         pass
 
     @cluster(num_nodes=1)
-    def test_upgrade_redpanda_yaml(self):
+    @parametrize(set_retention_name="delete_retention_ms",
+                 get_retention_name="log_retention_ms")
+    @parametrize(set_retention_name="log_retention_ms",
+                 get_retention_name="log_retention_ms")
+    def test_upgrade_redpanda_yaml(self, set_retention_name: str,
+                                   get_retention_name: str):
         """
         Verify that on first start, values are imported from redpanda.yaml
         to facilitate upgrades, but on subsequent startups we just emit
         a log message to say we're ignoring them.
+        Bonus: check that we can use aliases to set properties - getting properties still requires the proper name. do this with log_retention_ms
         """
 
         node = self.redpanda.nodes[0]
@@ -140,19 +146,22 @@ class ClusterConfigUpgradeTest(RedpandaTest):
         # skip writing out bootstrap.yaml files (the presence of which disables
         # the upgrade import of values from redpanda.yaml)
         self.redpanda.start_node(
-            node, override_cfg_params={'delete_retention_ms': '9876'})
+            node, override_cfg_params={set_retention_name: '9876'})
 
         # On first startup, redpanda should notice the value in
         # redpanda.yaml and import it into central config store
-        assert admin.get_cluster_config()['delete_retention_ms'] == 9876
+        assert admin.get_cluster_config(
+        )[get_retention_name] == 9876, f"trouble with the value for {get_retention_name=} at first start"
 
         # On second startup, central config is already initialized,
         # so the modified value in redpanda.yaml should be ignored.
         self.redpanda.restart_nodes(
-            [node], override_cfg_params={'delete_retention_ms': '1234'})
-        assert admin.get_cluster_config()['delete_retention_ms'] == 9876
+            [node], override_cfg_params={set_retention_name: '1234'})
+
+        assert admin.get_cluster_config(
+        )[get_retention_name] == 9876, f"trouble with the value for {get_retention_name=} after restart"
         assert self.redpanda.search_log_any(
-            "Ignoring value for 'delete_retention_ms'")
+            f"Ignoring value for '{set_retention_name}'")
 
 
 class HasRedpandaAndAdmin(Protocol):
