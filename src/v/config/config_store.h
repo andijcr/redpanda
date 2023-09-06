@@ -186,6 +186,15 @@ public:
         return result;
     }
 
+    std::set<std::string_view> property_aliases() const {
+        auto res = std::set<std::string_view>{};
+        for (auto& [k, v] : _aliases) {
+            std::ignore = v;
+            res.insert(k);
+        }
+        return res;
+    }
+
     friend std::ostream&
     operator<<(std::ostream& o, const config::config_store& c) {
         o << "{ ";
