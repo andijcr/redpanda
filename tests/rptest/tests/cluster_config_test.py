@@ -112,6 +112,7 @@ def wait_for_version_status_sync(admin, redpanda, version, nodes=None):
                    err_msg=f"Config status did not converge on {version}")
 
 
+# NOTEANDREA also here
 class ClusterConfigUpgradeTest(RedpandaTest):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, extra_rp_conf={}, **kwargs)
@@ -1355,6 +1356,7 @@ class ClusterConfigTest(RedpandaTest, ClusterConfigHelpersMixin):
             assert local_status['config_version'] == config_version
 
 
+# NOTEANDREA check alias delete_retention_ms here
 class ClusterConfigAliasTest(RedpandaTest, ClusterConfigHelpersMixin):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
