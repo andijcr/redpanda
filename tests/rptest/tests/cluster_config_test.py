@@ -1398,6 +1398,7 @@ class ClusterConfigAliasTest(RedpandaTest, ClusterConfigHelpersMixin):
         schema = self.admin.get_cluster_config_schema()['properties']
         assert schema[self.primary_name]['aliases'] == [self.aliased_name]
         assert self.aliased_name not in schema
+        self._check_value_everywhere(self.primary_name, 1234)
 
         # Config listing should not include aliases
         cluster_config = self.admin.get_cluster_config(include_defaults=True)
