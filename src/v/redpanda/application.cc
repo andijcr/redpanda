@@ -659,8 +659,8 @@ void application::hydrate_config(const po::variables_map& cfg) {
         }
     };
 
-    ss::smp::invoke_on_all([&config, cfg_path] {
-        config::node().load(cfg_path, config);
+    ss::smp::invoke_on_others([config = &config, cfg_path = &cfg_path] {
+        config::node().load(*cfg_path, *config);
     }).get0();
 
     auto node_config_errors = config::node().load(config);
