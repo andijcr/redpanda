@@ -554,35 +554,23 @@ public:
         auto bo = *base_offset_iter;
         auto ix = base_offset_iter.index();
 
-        auto maybe_hint = [&]() -> std::optional<hint_vec_t> {
-            // escape hatch: disable the use of _hints if their value causes
-            // std::out_of_bound exceptions.
-            if (unlikely(config::shard_local_cfg()
-                           .storage_ignore_cstore_hints.value())) {
-                return std::nullopt;
-            }
-
-            auto hint_it = _hints.lower_bound(bo);
-            if (hint_it == _hints.end() || hint_it->second == std::nullopt) {
-                return std::nullopt;
-            }
-
-            auto& hint_vec = hint_it->second.value();
-            auto hint_threshold = base_offset_iter.get_frame_initial_value();
-            auto hint_initial
-              = hint_vec.at(static_cast<size_t>(segment_meta_ix::base_offset))
-                  .initial;
-
-            // The hint can only be applied within the same column_store_frame
-            // instance. If the hint belongs to the previous frame we need to
-            // materialize without optimization.
-            if (hint_initial < hint_threshold) {
-                return std::nullopt;
-            }
-            return hint_vec;
-        }();
-
-        if (!maybe_hint) {
+        // escape hatch: disable the use of _hints if their value causes
+        // std::out_of_bound exceptions.
+        auto hint_it
+          = unlikely(
+              config::shard_local_cfg().storage_ignore_cstore_hints.value())
+              ? _hints.end()
+              : _hints.lower_bound(bo);
+        auto hint_threshold = base_offset_iter.get_frame_initial_value();
+        auto hint_initial = hint_it != _hints.end()
+                              ? hint_it->second->at(2).initial
+                              : 0;
+        // The hint can only be applied within the same column_store_frame
+        // instance. If the hint belongs to the previous frame we need to
+        // materialize without optimization.
+        if (
+          hint_it == _hints.end() || hint_it->second == std::nullopt
+          || hint_initial < hint_threshold) {
             return iterators_t(
               _is_compacted.at_index(ix),
               _size_bytes.at_index(ix),
@@ -599,7 +587,7 @@ public:
               _metadata_size_hint.at_index(ix));
         }
 
-        auto& hint = maybe_hint.value();
+        auto hint = hint_it->second;
         return iterators_t(
           at_with_hint<segment_meta_ix::is_compacted>(_is_compacted, ix, hint),
           at_with_hint<segment_meta_ix::size_bytes>(_size_bytes, ix, hint),
