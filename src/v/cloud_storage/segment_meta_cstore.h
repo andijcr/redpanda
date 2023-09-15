@@ -50,13 +50,11 @@ public:
       decoder_t decoder,
       const std::array<value_t, buffer_depth>& head,
       uint32_t size,
-      uint32_t pos = 0,
-      value_t frame_initial_value = {})
+      uint32_t pos = 0)
       : _head(head)
       , _decoder(std::move(decoder))
       , _pos(pos)
-      , _size(size)
-      , _frame_initial(frame_initial_value) {
+      , _size(size) {
         if (!_decoder->read(_read_buf)) {
             _read_buf = _head;
         }
@@ -66,8 +64,6 @@ public:
     segment_meta_frame_const_iterator() = default;
 
     uint32_t index() const { return _pos; }
-
-    value_t get_frame_initial_value() const noexcept { return _frame_initial; }
 
 private:
     const value_t& dereference() const {
@@ -101,7 +97,6 @@ private:
     std::optional<decoder_t> _decoder{std::nullopt};
     uint32_t _pos{0};
     uint32_t _size{0};
-    value_t _frame_initial;
 };
 
 struct share_frame_t {};
@@ -231,12 +226,7 @@ public:
           delta_alg_instance);
         decoder.skip(hint);
         auto curr_ix = hint.num_rows * details::FOR_buffer_depth;
-        auto it = const_iterator(
-          std::move(decoder),
-          _head,
-          _size,
-          curr_ix,
-          _tail->get_initial_value());
+        auto it = const_iterator(std::move(decoder), _head, _size, curr_ix);
         std::advance(it, index - curr_ix);
         return it;
     }
@@ -250,14 +240,6 @@ public:
         return sizeof(*this) + _tail.value().mem_use();
     }
 
-    /// Return first element of the frame or nullopt if frame is empty
-    auto get_initial_value() const noexcept {
-        if (_tail.has_value()) {
-            return std::make_optional(_tail->get_initial_value());
-        }
-        return std::nullopt;
-    }
-
     const_iterator begin() const {
         if (_tail.has_value()) {
             decoder_t decoder(
@@ -265,8 +247,7 @@ public:
               _tail->get_row_count(),
               _tail->share(),
               delta_alg_instance);
-            return const_iterator(
-              std::move(decoder), _head, _size, 0, _tail->get_initial_value());
+            return const_iterator(std::move(decoder), _head, _size);
         } else if (_size != 0) {
             // special case, data is only stored in the buffer
             // not in the compressed column
@@ -480,10 +461,6 @@ public:
         // Invariant: _inner_it is never equal to _inner_end
         // unless the iterator points to the end.
         return _inner_it == _inner_end;
-    }
-
-    auto get_frame_initial_value() const noexcept {
-        return _outer_it->get_frame_initial_value();
     }
 
 private:
