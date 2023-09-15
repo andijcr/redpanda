@@ -518,6 +518,8 @@ disk_log_impl::find_compaction_range(const compaction_config& cfg) {
     return range;
 }
 
+// NOTEANDREA this is the root of merging. indices are deleted, so ts must be
+// preserved by other means.
 ss::future<compaction_result> disk_log_impl::compact_adjacent_segments(
   std::pair<segment_set::iterator, segment_set::iterator> range,
   storage::compaction_config cfg) {
