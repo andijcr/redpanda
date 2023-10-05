@@ -27,6 +27,9 @@ VERSION_RE = re.compile(".*v(\\d+)\\.(\\d+)\\.(\\d+).*")
 
 RELEASES_CACHE_FILE = "/tmp/redpanda_releases.json"
 RELEASES_CACHE_FILE_TTL = timedelta(minutes=30)
+RELEASES_LOWER_BOUND = (
+    21, 10
+)  # this is the oldest release line that start shipping bugfixes while newer releases are produced
 
 
 def wait_for_num_versions(redpanda, num_versions):
@@ -360,7 +363,11 @@ class RedpandaInstaller:
                 for release in releases_json_unfiltered:
                     match = VERSION_RE.findall(release["tag_name"])
                     if match:
-                        releases_json.append(release)
+                        if int_tuple(match[0])[0:2] >= RELEASES_LOWER_BOUND:
+                            releases_json.append(release)
+                        else:
+                            self._redpanda.logger.info(
+                                f"Ignoring old release {release['tag_name']}")
                     else:
                         if release["tag_name"].startswith("release-"):
                             # Tags like 'release-20.12.4' predate the modern Redpanda versioning scheme
