@@ -348,21 +348,46 @@ class RedpandaInstaller:
                 releases_resp = requests.get(url)
                 releases_resp.raise_for_status()
                 try:
-                    releases_json = releases_resp.json()
+                    releases_json_unfiltered = releases_resp.json()
                 except:
                     self._redpanda.logger.error(releases_resp.text)
                     raise
 
-                assert isinstance(releases_json, list)
+                assert isinstance(releases_json_unfiltered, list)
+
+                # filter out releases < 2020, when the current versioning scheme was introduced
+                releases_json = []
+                for release in releases_json_unfiltered:
+                    match = VERSION_RE.findall(release["tag_name"])
+                    if match:
+                        releases_json.append(release)
+                    else:
+                        if release["tag_name"].startswith("release-"):
+                            # Tags like 'release-20.12.4' predate the modern Redpanda versioning scheme
+                            self._redpanda.logger.info(
+                                f"Ignoring legacy release {release['tag_name']}"
+                            )
+                        else:
+                            self._redpanda.logger.warn(
+                                f"Malformed release tag in repo: {release['tag_name']}"
+                            )
+
                 releases.extend(releases_json)
 
-                if len(releases_json) < per_page:
+                if len(releases_json_unfiltered) < per_page:
                     self._redpanda.logger.debug(
-                        f"Last page ({len(releases_json)} entries)")
+                        f"Last page ({len(releases_json_unfiltered)} entries)")
                     break
-                else:
-                    page += 1
-                    self._redpanda.logger.debug(f"Reading next page {page}")
+
+                # stop early if we reached very old releases <= 2020
+                if len(releases_json) < len(releases_json_unfiltered):
+                    self._redpanda.logger.warn(
+                        f"Terminating early, reached very old releases {len(releases_json)=}/{len(releases_json_unfiltered)=}"
+                    )
+                    break
+
+                page += 1
+                self._redpanda.logger.debug(f"Reading next page {page}")
 
             assert releases, "no releases found, github issue?"
 
@@ -393,14 +418,9 @@ class RedpandaInstaller:
                 if match:
                     versions.append(int_tuple(match[0]))
                 else:
-                    if release["tag_name"].startswith("release-"):
-                        # Tags like 'release-20.12.4' predate the modern Redpanda versioning scheme
-                        self._redpanda.logger.info(
-                            f"Ignoring legacy release {release['tag_name']}")
-                    else:
-                        self._redpanda.logger.warn(
-                            f"Malformed release tag in repo: {release['tag_name']}"
-                        )
+                    self._redpanda.logger.warn(
+                        f"Malformed release tag in repo: {release['tag_name']}"
+                    )
 
             self._released_versions = sorted(versions, reverse=True)
 
