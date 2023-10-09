@@ -27,6 +27,7 @@ rp_test(
     segment_meta_cstore_test.cc
     segment_chunk_test.cc
     materialized_manifest_cache_test.cc
+    cstore_v2.cc
   DEFINITIONS BOOST_TEST_DYN_LINK
   LIBRARIES v::seastar_testing_main Boost::unit_test_framework v::cloud_storage v::storage_test_utils v::cloud_roles v::raft
   ARGS "-- -c 1"
