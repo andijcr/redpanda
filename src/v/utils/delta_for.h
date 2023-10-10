@@ -558,48 +558,20 @@ protected:
     DeltaStep _delta{delta_alg};
 };
 
-/** \brief Delta-FOR decoder
- *
- * The object can be used to decode the iobuf copied from the encoder.
- * It can only read the whole sequence once. Once it's done reading
- * it can't be reset to read the sequence again.
- *
- * The initial_value and number of rows should match the corresponding
- * encoder which was used to compress the data.
- */
-template<class TVal, class DeltaStep = details::delta_xor>
-class deltafor_decoder {
+template<class TVal>
+class deltafor_delta_reader {
     static constexpr uint32_t row_width = details::FOR_buffer_depth;
 
 public:
-    explicit deltafor_decoder(
-      TVal initial_value, uint32_t cnt, iobuf data, DeltaStep delta = {})
-      : _initial(initial_value)
-      , _total{cnt}
-      , _pos{0}
-      , _data(std::move(data))
-      , _delta(delta) {}
+    explicit deltafor_delta_reader(iobuf data)
+      : _data{std::move(data)} {}
 
-    using row_t = std::array<TVal, row_width>;
-
-    /// Decode single row
-    bool read(std::span<TVal, row_width> row) {
-        if (_pos == _total) {
-            return false;
-        }
+    void unsafe_read(std::span<TVal, row_width> row) {
         auto nbits = _data.consume_type<uint8_t>();
         unpack(row, nbits);
-        _initial = _delta.decode(_initial, row);
-        _pos++;
-        return true;
     }
 
-    /// Skip rows
-    void skip(const deltafor_stream_pos_t<TVal>& st) {
-        _data.skip(st.offset);
-        _initial = st.initial;
-        _pos = st.num_rows;
-    }
+    void skip(size_t offset) { _data.skip(offset); }
 
 private:
     template<size_t N_BITS>
@@ -660,9 +632,54 @@ private:
         }(std::make_index_sequence<sizeof(uint64_t) * 8 + 1>{});
     }
 
+    iobuf_parser _data;
+};
+/** \brief Delta-FOR decoder
+ *
+ * The object can be used to decode the iobuf copied from the encoder.
+ * It can only read the whole sequence once. Once it's done reading
+ * it can't be reset to read the sequence again.
+ *
+ * The initial_value and number of rows should match the corresponding
+ * encoder which was used to compress the data.
+ */
+template<class TVal, class DeltaStep = details::delta_xor>
+class deltafor_decoder {
+    static constexpr uint32_t row_width = details::FOR_buffer_depth;
+
+public:
+    explicit deltafor_decoder(
+      TVal initial_value, uint32_t cnt, iobuf data, DeltaStep delta = {})
+      : _initial(initial_value)
+      , _total{cnt}
+      , _pos{0}
+      , _delta_reader(std::move(data))
+      , _delta(delta) {}
+
+    using row_t = std::array<TVal, row_width>;
+
+    /// Decode single row
+    bool read(std::span<TVal, row_width> row) {
+        if (_pos == _total) {
+            return false;
+        }
+        _delta_reader.unsafe_read(row);
+        _initial = _delta.decode(_initial, row);
+        _pos++;
+        return true;
+    }
+
+    /// Skip rows
+    void skip(const deltafor_stream_pos_t<TVal>& st) {
+        _delta_reader.skip(st.offset);
+        _initial = st.initial;
+        _pos = st.num_rows;
+    }
+
+private:
     TVal _initial;
     uint32_t _total;
     uint32_t _pos;
-    iobuf_parser _data;
+    deltafor_delta_reader<TVal> _delta_reader;
     DeltaStep _delta;
 };
