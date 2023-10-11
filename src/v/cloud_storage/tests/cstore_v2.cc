@@ -20,29 +20,38 @@ struct cstore_frame
     // key for this map
     constexpr static auto sm_base_offset_position = 2u;
 
-    // encoder type for each fields. they all get a delta_xor compression,
-    // except the key field (base_offset) that gets a delta_delta encoder, (it's
-    // monotonic)
+    // delta_alg, encoder type and decoder type for each fields. they all get a
+    // delta_xor compression, except the key field (base_offset) that gets a
+    // delta_delta encoder, (it's monotonic)
     template<size_t idx>
-    using encoder_t = deltafor_encoder<
-      int64_t,
-      std::conditional_t<
-        idx == sm_base_offset_position,
-        details::delta_delta<int64_t>,
-        details::delta_xor>,
-      true>;
+    using delta_alg_t = std::conditional_t<
+      idx == sm_base_offset_position,
+      details::delta_delta<int64_t>,
+      details::delta_xor>;
+    template<size_t idx>
+    using encoder_t = deltafor_encoder<int64_t, delta_alg_t<idx>, true>;
+    template<size_t idx>
+    using decoder_t = deltafor_decoder<int64_t, delta_alg_t<idx>>;
+
     // tuple-type with a deltafor_encoder for each field in a segment_meta.
-    using tuple_t = decltype([]<size_t... Is>(std::index_sequence<Is...>) {
+    using encoder_tuple_t = decltype([]<size_t... Is>(
+                                       std::index_sequence<Is...>) {
         return std::tuple{encoder_t<Is>{}...};
     }(std::make_index_sequence<sm_num_fields>()));
-
+    using encoder_in_buffer = std::array<int64_t, details::FOR_buffer_depth>;
     // for each key (the base offset of segment_meta), store the position of
     // each field in the corresponding deltafor_buffer
+
+    using decoder_tuple_t = decltype([]<size_t... Is>(
+                                       std::index_sequence<Is...>) {
+        return std::tuple{decoder_t<Is>{}...};
+    }(std::make_index_sequence<sm_num_fields>()));
     struct hint_t {
         model::offset key;
         std::array<size_t, sm_num_fields> mapped_value;
     };
 
+private:
     // NOTEANDREA should be possible to have an upper bound and move this to
     // std::array invariants: this is sorted on key, has few elements, and key
     // in contained in the range of base_offsets covered by this span this makes
@@ -50,13 +59,24 @@ struct cstore_frame
     // sequence for it (or the bigger value no bigger than it) in the sequence,
     // and it will give us an array of offsets into the deltafor buffer, to
     // speedup retrieval of encoded segment_meta
-    std::vector<hint_t> frame_hints;
+    std::vector<hint_t> _frame_hints{};
 
     // the deltafor encoders are contained here. invariants: all the deltafor
     // have the same size, together they encode all the segment_meta saved in
     // this frame
-    tuple_t frame_fields;
+    encoder_tuple_t _frame_fields{};
 
+    // before they can encoded in the encoders, we need to accumulate
+    // #details::FOR_buffer_depth segment_meta objects. this in_buffer contains
+    // the columnar projection of the most recent elements. once it's full, they
+    // get encoded and the buffer is emptied for the next batch
+    std::array<encoder_in_buffer, sm_num_fields> _in_buffer{};
+
+    // size doubles down as an index in _in_buffer, since _frame_fields contains
+    // N*details::FOR_buffer_depth elements
+    std::size_t _size{0};
+
+public:
     struct const_frame_iterator
       : public boost::stl_interfaces::proxy_iterator_interface<
           const_frame_iterator,
@@ -74,6 +94,8 @@ struct cstore_frame
           const_frame_iterator const& lhs,
           const_frame_iterator const& rhs) noexcept;
         using base_type::operator++;
+
+    private:
     };
     BOOST_STL_INTERFACES_STATIC_ASSERT_CONCEPT(
       const_frame_iterator, std::forward_iterator);
@@ -94,16 +116,35 @@ struct cstore_frame
 
     const_frame_iterator begin();
     const_frame_iterator end();
-    bool swap(cstore_frame&);
+    void swap(cstore_frame& rhs) noexcept;
     size_t max_size() const;
     // these could be inherited by sequence_container but we can do better
-    bool size() const;
-    bool operator==(cstore_frame const&) const;
+    constexpr size_t size() const noexcept { return _size; }
+    bool operator==(cstore_frame const& rhs) const noexcept;
 
     // providing these offers some other possibilities
     cstore_frame(const_iterator const&, const_iterator const&);
 };
 
+void cstore_frame::swap(cstore_frame& rhs) noexcept {
+    if (this == &rhs) {
+        return;
+    }
+    auto us = std::tie(_frame_hints, _frame_fields, _in_buffer, _size);
+    auto them = std::tie(
+      rhs._frame_hints, rhs._frame_fields, rhs._in_buffer, rhs._size);
+    std::swap(us, them);
+}
+
+bool cstore_frame::operator==(cstore_frame const& rhs) const noexcept {
+    // exclude hints, as they are just a lookup optimization. compare fields in
+    // order of simplicity
+    return std::tie(_size, _in_buffer, _frame_fields)
+           == std::tie(rhs._size, rhs._in_buffer, rhs._frame_fields);
+}
+
+constexpr cstore_frame::const_frame_iterator::const_frame_iterator(
+  cstore_frame const& cf) {}
 } // namespace cloud_storage
 
 BOOST_AUTO_TEST_SUITE(test_suite_cstore_v2);

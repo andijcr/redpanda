@@ -41,6 +41,11 @@ public:
       , _in(cref().cbegin(), cref().cend())
       , _original_size(cref().size_bytes()) {}
 
+    iobuf_parser_base() noexcept
+      : _buf(nullptr)
+      , _in()
+      , _original_size(0) {}
+
     size_t bytes_left() const { return _original_size - _in.bytes_consumed(); }
 
     size_t bytes_consumed() const { return _in.bytes_consumed(); }
@@ -132,6 +137,8 @@ class iobuf_parser final : public iobuf_parser_base {
 public:
     explicit iobuf_parser(iobuf buf)
       : iobuf_parser_base(std::move(buf), tag_owned_buf{}) {}
+    iobuf_parser() noexcept
+      : iobuf_parser_base() {}
 
     iobuf share(size_t len) {
         auto ret = ref().share(bytes_consumed(), len);

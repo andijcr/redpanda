@@ -60,6 +60,9 @@ public:
             _frag_index_end = _frag->get() + _frag->size();
         }
     }
+
+    io_iterator_consumer() noexcept
+      : io_iterator_consumer(io_const_iterator{}, io_const_iterator{}) {}
     void skip(size_t n) {
         size_t c = consume(n, [](const char*, size_t /*max*/) {
             return ss::stop_iteration::no;

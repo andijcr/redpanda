@@ -565,6 +565,7 @@ class deltafor_delta_reader {
 public:
     explicit deltafor_delta_reader(iobuf data)
       : _data{std::move(data)} {}
+    deltafor_delta_reader() = default;
 
     void unsafe_read(std::span<TVal, row_width> row) {
         auto nbits = _data.consume_type<uint8_t>();
@@ -632,7 +633,7 @@ private:
         }(std::make_index_sequence<sizeof(uint64_t) * 8 + 1>{});
     }
 
-    iobuf_parser _data;
+    iobuf_parser _data{};
 };
 /** \brief Delta-FOR decoder
  *
@@ -656,6 +657,8 @@ public:
       , _delta_reader(std::move(data))
       , _delta(delta) {}
 
+    deltafor_decoder() = default;
+
     using row_t = std::array<TVal, row_width>;
 
     /// Decode single row
@@ -678,8 +681,8 @@ public:
 
 private:
     TVal _initial;
-    uint32_t _total;
-    uint32_t _pos;
-    deltafor_delta_reader<TVal> _delta_reader;
+    uint32_t _total{0};
+    uint32_t _pos{0};
+    deltafor_delta_reader<TVal> _delta_reader{};
     DeltaStep _delta;
 };
