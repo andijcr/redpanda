@@ -19,6 +19,7 @@ struct cstore_frame
     // which field is the base_offset. this gets a special treatment as it's the
     // key for this map
     constexpr static auto sm_base_offset_position = 2u;
+    constexpr static auto sm_committed_offset_position = 3u;
 
     // delta_alg, encoder type and decoder type for each fields. they all get a
     // delta_xor compression, except the key field (base_offset) that gets a
@@ -68,15 +69,25 @@ private:
 
     // before they can encoded in the encoders, we need to accumulate
     // #details::FOR_buffer_depth segment_meta objects. this in_buffer contains
-    // the columnar projection of the most recent elements. once it's full, they
-    // get encoded and the buffer is emptied for the next batch
-    std::array<encoder_in_buffer, sm_num_fields> _in_buffer{};
+    // 1 less then that. when there is a request to append the last one, they
+    // will all be columnar-projected and encoded in the encoders, so this
+    // buffer will never fill to full capacity
+    std::array<segment_meta, details::FOR_buffer_depth - 1> _in_buffer{};
 
     // size doubles down as an index in _in_buffer, since _frame_fields contains
     // N*details::FOR_buffer_depth elements
     std::size_t _size{0};
 
+    // helper to construct a reader
+    static auto to_decoder_tuple(encoder_tuple_t& in) noexcept
+      -> decoder_tuple_t;
+
 public:
+    // returns base and committed offset covered by this span, as the base
+    // offset of first element and commit offset of the last one
+    auto get_base_offset() const noexcept -> model::offset;
+    auto get_committed_offset() const noexcept -> model::offset;
+
     struct const_frame_iterator
       : public boost::stl_interfaces::proxy_iterator_interface<
           const_frame_iterator,
@@ -87,15 +98,24 @@ public:
           std::forward_iterator_tag,
           segment_meta>;
         constexpr const_frame_iterator() = default;
-        constexpr explicit const_frame_iterator(cstore_frame const& cf);
+        constexpr explicit const_frame_iterator(
+          cstore_frame const& cf) noexcept;
         constexpr segment_meta& operator*() const noexcept;
         constexpr const_frame_iterator& operator++() noexcept;
         friend constexpr bool operator==(
           const_frame_iterator const& lhs,
-          const_frame_iterator const& rhs) noexcept;
+          const_frame_iterator const& rhs) noexcept {
+            return lhs._pseudo_base_offset == rhs._pseudo_base_offset;
+        }
         using base_type::operator++;
 
     private:
+        // if this iterator is not end, this value is the actual base_offset of
+        // the pointed segment_meta if this iterator is end, this value is the
+        // sentinel value model::offset, and this an invariant of the iterator:
+        // if the data pointed to is exhausted, this value is set to
+        // model::offset
+        model::offset _pseudo_base_offset{};
     };
     BOOST_STL_INTERFACES_STATIC_ASSERT_CONCEPT(
       const_frame_iterator, std::forward_iterator);
@@ -114,8 +134,8 @@ public:
     cstore_frame(cstore_frame&&);
     cstore_frame& operator=(cstore_frame&&);
 
-    const_frame_iterator begin();
-    const_frame_iterator end();
+    inline const_frame_iterator begin() { return const_frame_iterator{*this}; }
+    inline const_frame_iterator end() { return {}; }
     void swap(cstore_frame& rhs) noexcept;
     size_t max_size() const;
     // these could be inherited by sequence_container but we can do better
@@ -143,8 +163,47 @@ bool cstore_frame::operator==(cstore_frame const& rhs) const noexcept {
            == std::tie(rhs._size, rhs._in_buffer, rhs._frame_fields);
 }
 
+auto cstore_frame::to_decoder_tuple(encoder_tuple_t& in) noexcept
+  -> decoder_tuple_t {
+    return [&]<size_t... Is>(std::index_sequence<Is...>) {
+        return decoder_tuple_t{decoder_t<Is>{
+          std::get<Is>(in).get_initial_value(),
+          std::get<Is>(in).get_row_count(),
+          std::get<Is>(in).share(),
+          delta_alg_t<Is>{}}...};
+    }(std::make_index_sequence<std::tuple_size_v<encoder_tuple_t>>());
+}
+
+auto cstore_frame::get_base_offset() const noexcept -> model::offset {
+    if (_size == 0) {
+        return model::offset{};
+    }
+    if (_size <= _in_buffer.size()) {
+        // no data in the encoders yet
+        return _in_buffer[0].base_offset;
+    }
+
+    // data in the encoders
+    return model::offset(
+      std::get<sm_base_offset_position>(_frame_fields).get_initial_value());
+}
+auto cstore_frame::get_committed_offset() const noexcept -> model::offset {
+    if (_size == 0) {
+        return model::offset{};
+    }
+
+    if (_size <= _in_buffer.size()) {
+        // no data in the encoders yet
+        return _in_buffer[_size - 1].committed_offset;
+    }
+
+    return model::offset(
+      std::get<sm_committed_offset_position>(_frame_fields).get_last_value());
+}
 constexpr cstore_frame::const_frame_iterator::const_frame_iterator(
-  cstore_frame const& cf) {}
+  cstore_frame const& cf)
+  : _pseudo_base_offset(cf.get_base_offset()) {}
+
 } // namespace cloud_storage
 
 BOOST_AUTO_TEST_SUITE(test_suite_cstore_v2);
