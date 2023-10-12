@@ -663,7 +663,7 @@ public:
 
     /// Decode single row
     bool read(std::span<TVal, row_width> row) {
-        if (_pos == _total) {
+        if (empty()) {
             return false;
         }
         _delta_reader.unsafe_read(row);
@@ -672,6 +672,7 @@ public:
         return true;
     }
 
+    bool empty() const noexcept { return _pos == _total; }
     /// Skip rows
     void skip(const deltafor_stream_pos_t<TVal>& st) {
         _delta_reader.skip(st.offset);

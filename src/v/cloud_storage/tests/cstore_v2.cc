@@ -9,8 +9,8 @@
 
 namespace cloud_storage {
 
-struct cstore_frame
-  : public boost::stl_interfaces::sequence_container_interface<cstore_frame> {
+struct cstore_v2
+  : public boost::stl_interfaces::sequence_container_interface<cstore_v2> {
     // NOTEANDREA: static assert that segment_meta is not an envelope, we need
     // this to extract the correct tuple of fields (check)
 
@@ -47,40 +47,97 @@ struct cstore_frame
                                        std::index_sequence<Is...>) {
         return std::tuple{decoder_t<Is>{}...};
     }(std::make_index_sequence<sm_num_fields>()));
+
+    using segment_meta_buffer
+      = std::array<segment_meta, details::FOR_buffer_depth - 1>;
     struct hint_t {
         model::offset key;
         std::array<size_t, sm_num_fields> mapped_value;
     };
 
 private:
-    // NOTEANDREA should be possible to have an upper bound and move this to
-    // std::array invariants: this is sorted on key, has few elements, and key
-    // in contained in the range of base_offsets covered by this span this makes
-    // it so that on base_offset lookup we can linearly (or binary) search this
-    // sequence for it (or the bigger value no bigger than it) in the sequence,
-    // and it will give us an array of offsets into the deltafor buffer, to
-    // speedup retrieval of encoded segment_meta
-    std::vector<hint_t> _frame_hints{};
+    // NOTEANDREA move the state to a ss::lw_shared_ptr managed struct, to
+    // create a copy-on-write structure
 
-    // the deltafor encoders are contained here. invariants: all the deltafor
-    // have the same size, together they encode all the segment_meta saved in
-    // this frame
-    encoder_tuple_t _frame_fields{};
+    struct w_state;
+    struct r_state {
+        // parent is used to implement copy-on-write, since _frame_fields share
+        // buffers with _parent
+        ss::lw_shared_ptr<const w_state> _parent;
+        decoder_tuple_t _frame_fields{};
+        auto empty() const { return std::get<0>(_frame_fields).empty(); }
+    };
+    struct w_state : public ss::enable_lw_shared_from_this<w_state> {
+        // NOTEANDREA should be possible to have an upper bound and move this to
+        // std::array invariants: this is sorted on key, has few elements, and
+        // key in contained in the range of base_offsets covered by this span
+        // this makes it so that on base_offset lookup we can linearly (or
+        // binary) search this sequence for it (or the bigger value no bigger
+        // than it) in the sequence, and it will give us an array of offsets
+        // into the deltafor buffer, to speedup retrieval of encoded
+        // segment_meta
+        std::vector<hint_t> _frame_hints{};
 
+        // the deltafor encoders are contained here. invariants: all the
+        // deltafor have the same size, together they encode all the
+        // segment_meta saved in this frame
+        encoder_tuple_t _frame_fields{};
+
+        // used to implement copy-on-write: const_iterator grab a shared_ptr, if
+        // some destructive operation (truncate, rewrite, append) has to happen
+        // and has_reader() is true, a copy is created
+        inline bool has_reader() const { return this->use_count() > 0; }
+
+        friend bool
+        operator==(w_state const& lhs, w_state const& rhs) noexcept {
+            // only frame fields contains data that matters, _frame_hints are a
+            // lookup optimization
+            return lhs._frame_fields == rhs._frame_fields;
+        }
+
+        auto get_base_offset() const -> model::offset {
+            // precondition: this is not empty
+            return model::offset(
+              std::get<sm_base_offset_position>(_frame_fields)
+                .get_initial_value());
+        }
+
+        auto get_commited_offset() const -> model::offset {
+            // precondition: this is not empty
+            return model::offset(
+              std::get<sm_committed_offset_position>(_frame_fields)
+                .get_last_value());
+        }
+
+        auto get_r_state() const -> r_state {
+            return {
+              ._parent = shared_from_this(),
+              ._frame_fields =
+                [&]<size_t... Is>(std::index_sequence<Is...>) {
+                    return decoder_tuple_t{decoder_t<Is>{
+                      std::get<Is>(_frame_fields).get_initial_value(),
+                      std::get<Is>(_frame_fields).get_row_count(),
+                      std::get<Is>(_frame_fields).share(),
+                      delta_alg_t<Is>{}}...};
+                }(std::make_index_sequence<
+                  std::tuple_size_v<encoder_tuple_t>>())};
+        };
+    };
+
+    // invariant: if _size is > details::FOR_buffer_depth, _encoded_state is not
+    // empty and no w_state is ever empty
+    std::vector<ss::lw_shared_ptr<w_state>> _encoded_state{};
     // before they can encoded in the encoders, we need to accumulate
     // #details::FOR_buffer_depth segment_meta objects. this in_buffer contains
     // 1 less then that. when there is a request to append the last one, they
     // will all be columnar-projected and encoded in the encoders, so this
     // buffer will never fill to full capacity
-    std::array<segment_meta, details::FOR_buffer_depth - 1> _in_buffer{};
+    segment_meta_buffer _in_buffer{};
 
     // size doubles down as an index in _in_buffer, since _frame_fields contains
     // N*details::FOR_buffer_depth elements
-    std::size_t _size{0};
 
-    // helper to construct a reader
-    static auto to_decoder_tuple(encoder_tuple_t& in) noexcept
-      -> decoder_tuple_t;
+    std::size_t _size{0};
 
 public:
     // returns base and committed offset covered by this span, as the base
@@ -98,8 +155,7 @@ public:
           std::forward_iterator_tag,
           segment_meta>;
         constexpr const_frame_iterator() = default;
-        constexpr explicit const_frame_iterator(
-          cstore_frame const& cf) noexcept;
+        explicit const_frame_iterator(cstore_v2 const& cf);
         constexpr segment_meta& operator*() const noexcept;
         constexpr const_frame_iterator& operator++() noexcept;
         friend constexpr bool operator==(
@@ -116,7 +172,27 @@ public:
         // if the data pointed to is exhausted, this value is set to
         // model::offset
         model::offset _pseudo_base_offset{};
+        // state is expensive, since this is a const_iterator it makes sense to
+        // store it in a shared pointer with a copy_on_write mechanism
+        struct state {
+            std::array<segment_meta, details::FOR_buffer_depth>
+              uncompressed_head{};
+            r_state _active_frame{};
+            uint8_t head_ptr = uncompressed_head.size();
+
+            uint8_t _trailing_sz;
+            std::vector<ss::lw_shared_ptr<const w_state>> _frames_to_read;
+            segment_meta_buffer _trailing_sm;
+            explicit state(cstore_v2 const& cs)
+              : _trailing_sz{uint8_t(cs.size() % details::FOR_buffer_depth)}
+              , _frames_to_read(
+                  cs._encoded_state.begin(), cs._encoded_state.end())
+              , _trailing_sm{cs._in_buffer} {}
+        };
+        // invariant: _state is valid if this is not end pointer
+        ss::lw_shared_ptr<state> _state{};
     };
+
     BOOST_STL_INTERFACES_STATIC_ASSERT_CONCEPT(
       const_frame_iterator, std::forward_iterator);
 
@@ -128,53 +204,51 @@ public:
     using difference_type = std::ptrdiff_t;
     using size_type = std::size_t;
 
-    cstore_frame() = default;
-    cstore_frame(cstore_frame const&);
-    cstore_frame& operator=(cstore_frame const&);
-    cstore_frame(cstore_frame&&);
-    cstore_frame& operator=(cstore_frame&&);
+    cstore_v2() = default;
+    cstore_v2(cstore_v2 const&);
+    cstore_v2& operator=(cstore_v2 const&);
+    cstore_v2(cstore_v2&&);
+    cstore_v2& operator=(cstore_v2&&);
 
-    inline const_frame_iterator begin() { return const_frame_iterator{*this}; }
+    inline const_frame_iterator begin() {
+        return empty() ? const_frame_iterator{} : const_frame_iterator{*this};
+    }
     inline const_frame_iterator end() { return {}; }
-    void swap(cstore_frame& rhs) noexcept;
+    void swap(cstore_v2& rhs) noexcept;
     size_t max_size() const;
     // these could be inherited by sequence_container but we can do better
     constexpr size_t size() const noexcept { return _size; }
-    bool operator==(cstore_frame const& rhs) const noexcept;
+    bool operator==(cstore_v2 const& rhs) const noexcept;
 
     // providing these offers some other possibilities
-    cstore_frame(const_iterator const&, const_iterator const&);
+    cstore_v2(const_iterator const&, const_iterator const&);
 };
 
-void cstore_frame::swap(cstore_frame& rhs) noexcept {
+void cstore_v2::swap(cstore_v2& rhs) noexcept {
     if (this == &rhs) {
         return;
     }
-    auto us = std::tie(_frame_hints, _frame_fields, _in_buffer, _size);
-    auto them = std::tie(
-      rhs._frame_hints, rhs._frame_fields, rhs._in_buffer, rhs._size);
+    auto us = std::tie(_encoded_state, _in_buffer, _size);
+    auto them = std::tie(rhs._encoded_state, rhs._in_buffer, rhs._size);
     std::swap(us, them);
 }
 
-bool cstore_frame::operator==(cstore_frame const& rhs) const noexcept {
+bool cstore_v2::operator==(cstore_v2 const& rhs) const noexcept {
     // exclude hints, as they are just a lookup optimization. compare fields in
     // order of simplicity
-    return std::tie(_size, _in_buffer, _frame_fields)
-           == std::tie(rhs._size, rhs._in_buffer, rhs._frame_fields);
+    constexpr static auto to_reference = [](auto& ptr) -> decltype(auto) {
+        return *ptr;
+    };
+    return std::tie(_size, _in_buffer) == std::tie(rhs._size, rhs._in_buffer)
+           && std::ranges::equal(
+             _encoded_state,
+             rhs._encoded_state,
+             std::equal_to<>{},
+             to_reference,
+             to_reference);
 }
 
-auto cstore_frame::to_decoder_tuple(encoder_tuple_t& in) noexcept
-  -> decoder_tuple_t {
-    return [&]<size_t... Is>(std::index_sequence<Is...>) {
-        return decoder_tuple_t{decoder_t<Is>{
-          std::get<Is>(in).get_initial_value(),
-          std::get<Is>(in).get_row_count(),
-          std::get<Is>(in).share(),
-          delta_alg_t<Is>{}}...};
-    }(std::make_index_sequence<std::tuple_size_v<encoder_tuple_t>>());
-}
-
-auto cstore_frame::get_base_offset() const noexcept -> model::offset {
+auto cstore_v2::get_base_offset() const noexcept -> model::offset {
     if (_size == 0) {
         return model::offset{};
     }
@@ -184,10 +258,9 @@ auto cstore_frame::get_base_offset() const noexcept -> model::offset {
     }
 
     // data in the encoders
-    return model::offset(
-      std::get<sm_base_offset_position>(_frame_fields).get_initial_value());
+    return _encoded_state.front()->get_base_offset();
 }
-auto cstore_frame::get_committed_offset() const noexcept -> model::offset {
+auto cstore_v2::get_committed_offset() const noexcept -> model::offset {
     if (_size == 0) {
         return model::offset{};
     }
@@ -197,12 +270,11 @@ auto cstore_frame::get_committed_offset() const noexcept -> model::offset {
         return _in_buffer[_size - 1].committed_offset;
     }
 
-    return model::offset(
-      std::get<sm_committed_offset_position>(_frame_fields).get_last_value());
+    return _encoded_state.back()->get_commited_offset();
 }
-constexpr cstore_frame::const_frame_iterator::const_frame_iterator(
-  cstore_frame const& cf)
-  : _pseudo_base_offset(cf.get_base_offset()) {}
+cstore_v2::const_frame_iterator::const_frame_iterator(cstore_v2 const& cf)
+  : _pseudo_base_offset(cf.get_base_offset())
+  , _state(ss::make_lw_shared<state>(cf)) {}
 
 } // namespace cloud_storage
 
