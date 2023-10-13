@@ -66,6 +66,29 @@ private:
         ss::lw_shared_ptr<const w_state> _parent;
         decoder_tuple_t _frame_fields{};
         auto empty() const { return std::get<0>(_frame_fields).empty(); }
+
+        auto clone() const -> r_state {
+            if (empty()) {
+                return {};
+            }
+            // get a pristine r_state
+            auto res = _parent->get_r_state();
+            // fix up the _frame_fields by skipping ahead
+            [&]<size_t... Is>(std::index_sequence<Is...>) {
+                // get a copy of all the skip info
+                auto pos_tuple = std::tuple{
+                  std::get<Is>(_frame_fields)
+                    .get_pos()
+                    .to_stream_pos_t(std::get<Is>(_parent->_frame_fields)
+                                       .get_position()
+                                       .offset)...};
+                // apply them
+                (std::get<Is>(res._frame_fields).skip(std::get<Is>(pos_tuple)),
+                 ...);
+            }(std::make_index_sequence<std::tuple_size_v<decoder_tuple_t>>());
+
+            return res;
+        }
     };
     struct w_state : public ss::enable_lw_shared_from_this<w_state> {
         // NOTEANDREA should be possible to have an upper bound and move this to
@@ -86,7 +109,7 @@ private:
         // used to implement copy-on-write: const_iterator grab a shared_ptr, if
         // some destructive operation (truncate, rewrite, append) has to happen
         // and has_reader() is true, a copy is created
-        inline bool has_reader() const { return this->use_count() > 0; }
+        inline bool has_reader() const { return use_count() > 1; }
 
         friend bool
         operator==(w_state const& lhs, w_state const& rhs) noexcept {
@@ -166,6 +189,12 @@ public:
         using base_type::operator++;
 
     private:
+        bool state_is_shared() const noexcept { return !_state.owned(); }
+
+        void clone_state() const {
+            // assert _state
+            _state = ss::make_lw_shared(_state->clone());
+        }
         // if this iterator is not end, this value is the actual base_offset of
         // the pointed segment_meta if this iterator is end, this value is the
         // sentinel value model::offset, and this an invariant of the iterator:
@@ -176,21 +205,48 @@ public:
         // store it in a shared pointer with a copy_on_write mechanism
         struct state {
             std::array<segment_meta, details::FOR_buffer_depth>
-              uncompressed_head{};
+              _uncompressed_head{};
             r_state _active_frame{};
-            uint8_t head_ptr = uncompressed_head.size();
+            // invariant: size() means _uncompressed_head is empty and needs to
+            // be decompressed
+            uint8_t _head_ptr = _uncompressed_head.size();
 
             uint8_t _trailing_sz;
-            std::vector<ss::lw_shared_ptr<const w_state>> _frames_to_read;
             segment_meta_buffer _trailing_sm;
+
+            std::vector<ss::lw_shared_ptr<const w_state>> _frames_to_read;
             explicit state(cstore_v2 const& cs)
               : _trailing_sz{uint8_t(cs.size() % details::FOR_buffer_depth)}
+              , _trailing_sm{cs._in_buffer}
               , _frames_to_read(
-                  cs._encoded_state.begin(), cs._encoded_state.end())
-              , _trailing_sm{cs._in_buffer} {}
+                  cs._encoded_state.begin(), cs._encoded_state.end()) {}
+
+            auto clone() const -> state {
+                auto res = state{};
+                res._head_ptr = _head_ptr;
+                // just copy forward data
+                for (auto i = size_t(_head_ptr); i < _uncompressed_head.size();
+                     ++i) {
+                    res._uncompressed_head[i] = _uncompressed_head[i];
+                }
+                res._trailing_sz = _trailing_sz;
+                for (auto i = size_t(0); i < _trailing_sz; ++i) {
+                    res._trailing_sm[i] = _trailing_sm[i];
+                }
+
+                // create a clone from the original cstore iobuf
+                res._active_frame = _active_frame.clone();
+                // copy the frames after this that will be read after the active
+                // frame
+                res._frames_to_read = _frames_to_read;
+                return res;
+            }
+
+        private:
+            state() = default;
         };
         // invariant: _state is valid if this is not end pointer
-        ss::lw_shared_ptr<state> _state{};
+        mutable ss::lw_shared_ptr<state> _state{};
     };
 
     BOOST_STL_INTERFACES_STATIC_ASSERT_CONCEPT(

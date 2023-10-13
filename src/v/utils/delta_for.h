@@ -574,6 +574,8 @@ public:
 
     void skip(size_t offset) { _data.skip(offset); }
 
+    auto bytes_left() const noexcept -> size_t { return _data.bytes_left(); }
+
 private:
     template<size_t N_BITS>
     void unpack(std::span<TVal, row_width> output) {
@@ -678,6 +680,30 @@ public:
         _delta_reader.skip(st.offset);
         _initial = st.initial;
         _pos = st.num_rows;
+    }
+
+    // method to reconstruct a copy of the state of this deltafor_decoder,
+    // having access to the original iobuf
+    struct pos {
+        uint32_t initial;
+        uint32_t num_rows;
+        size_t remaining_to_read;
+        auto to_stream_pos_t(size_t parent_original_size) const noexcept
+          -> deltafor_stream_pos_t<TVal> {
+            return {
+              .offset = parent_original_size - remaining_to_read,
+              .initial = initial,
+              .num_rows = num_rows,
+            };
+        }
+    };
+
+    auto get_pos() const noexcept -> pos {
+        return {
+          .initial = _initial,
+          .num_rows = _pos,
+          .remaining_to_read = _delta_reader.remaining_bytes(),
+        };
     }
 
 private:
