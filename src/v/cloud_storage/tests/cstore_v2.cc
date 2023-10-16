@@ -178,13 +178,28 @@ public:
           const_frame_iterator,
           std::forward_iterator_tag,
           segment_meta>;
-        constexpr const_frame_iterator() = default;
-        explicit const_frame_iterator(cstore_v2 const& cf);
+        constexpr const_frame_iterator() = default;         // end iterator
+        explicit const_frame_iterator(cstore_v2 const& cf); // begin iterator
+
+        // copy and move works as expected, eventually sharing the lw_shared_ptr
+        // _state
         constexpr segment_meta const& operator*() const noexcept {
             vassert(_state, "invariant: _state is valid if this is not end");
             return _state->get();
         }
-        constexpr const_frame_iterator& operator++() noexcept;
+        constexpr const_frame_iterator& operator++() noexcept {
+            vassert(_state, "invariant: _state is valid if this is not end");
+            if (_state->is_last_one()) {
+                _state.release();
+                _pseudo_base_offset = model::offset();
+                return *this;
+            }
+
+            ensure_owned();
+            _state->advance();
+            _pseudo_base_offset = _state->get().base_offset;
+            return *this;
+        }
         friend constexpr bool operator==(
           const_frame_iterator const& lhs,
           const_frame_iterator const& rhs) noexcept {
@@ -212,7 +227,7 @@ public:
             // be decompressed
             uint8_t _head_ptr = _uncompressed_head.size();
             uint8_t _trailing_ptr = {0};
-            uint8_t _trailing_sz;
+            uint8_t _trailing_sz = {0};
             std::array<segment_meta, details::FOR_buffer_depth - 1>
               _trailing_sm;
 
@@ -230,12 +245,9 @@ public:
             // move op are allowed
             state(state&& rhs) noexcept = default;
             state& operator=(state&&) noexcept = default;
+            ~state() = default;
 
-            // clone performs a "deep" clone such as destructive op on this do
-            // not modify the returned object
-            auto clone() const -> state;
-
-            auto get() const -> segment_meta const& {
+            void check_valid() const {
                 vassert(
                   (_head_ptr < _uncompressed_head.size() && _trailing_ptr == 0)
                     || (_head_ptr == _uncompressed_head.size() && _trailing_ptr < _trailing_sz),
@@ -243,12 +255,20 @@ public:
                   "the head is being consumed or that the trailer is begin "
                   "consumed (without being terminaned, since that would be "
                   "like accessing end())");
-                if (_head_ptr < _uncompressed_head.size()) {
-                    return _uncompressed_head[_head_ptr];
-                }
-
-                return _trailing_sm[_trailing_ptr];
             }
+            // clone performs a "deep" clone such as destructive op on this do
+            // not modify the returned object
+            auto clone() const -> state;
+            // get current segment_meta (either from the head_buffer or from the
+            // trailing buffer)
+            auto get() const -> segment_meta const&;
+
+            // we are interested to check if incrementing this would leads to
+            // reaching end
+            auto is_last_one() const noexcept -> bool;
+
+            // performs ++
+            auto advance() const noexcept -> model::offset;
 
         private:
             state() = default;
@@ -275,7 +295,7 @@ public:
     cstore_v2& operator=(cstore_v2&&);
 
     inline const_frame_iterator begin() {
-        return empty() ? const_frame_iterator{} : const_frame_iterator{*this};
+        return empty() ? end() : const_frame_iterator{*this};
     }
     inline const_frame_iterator end() { return {}; }
     void swap(cstore_v2& rhs) noexcept;
@@ -341,6 +361,8 @@ cstore_v2::const_frame_iterator::const_frame_iterator(cstore_v2 const& cf)
   , _state(ss::make_lw_shared<state>(cf)) {}
 
 auto cstore_v2::const_frame_iterator::state::clone() const -> state {
+    check_valid(); // not strictly needed but it's useful to limit the number of
+                   // possible states of the system
     auto res = state{};
     res._head_ptr = _head_ptr;
     // just copy forward data
@@ -364,6 +386,39 @@ void cstore_v2::const_frame_iterator::ensure_owned() {
     if (!_state.owned()) {
         _state = ss::make_lw_shared(_state->clone());
     }
+}
+
+auto cstore_v2::const_frame_iterator::state::get() const
+  -> segment_meta const& {
+    check_valid();
+    if (_head_ptr < _uncompressed_head.size()) {
+        return _uncompressed_head[_head_ptr];
+    }
+    return _trailing_sm[_trailing_ptr];
+}
+
+auto cstore_v2::const_frame_iterator::state::is_last_one() const noexcept
+  -> bool {
+    check_valid();
+    // if no more data in the buffers, then there should be only one in the
+    // trailer
+    if (
+      _head_ptr == _uncompressed_head.size()
+      && std::get<sm_base_offset_position>(_active_frame._frame_fields).empty()
+      && _frames_to_read.empty()) {
+        return _trailing_ptr == (_trailing_sz - 1);
+    }
+
+    // if there is data in the head buffer, it must be only one datapoint and
+    // buffers need to be empty and no other data should be in the trailer
+    if (_head_ptr == _uncompressed_head.size() - 1) {
+        return _trailing_sz == 0
+               && std::get<sm_base_offset_position>(_active_frame._frame_fields)
+                    .empty()
+               && _frames_to_read.empty();
+    }
+
+    return false;
 }
 } // namespace cloud_storage
 
