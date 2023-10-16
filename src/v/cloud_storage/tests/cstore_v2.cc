@@ -48,8 +48,6 @@ struct cstore_v2
         return std::tuple{decoder_t<Is>{}...};
     }(std::make_index_sequence<sm_num_fields>()));
 
-    using segment_meta_buffer
-      = std::array<segment_meta, details::FOR_buffer_depth - 1>;
     struct hint_t {
         model::offset key;
         std::array<size_t, sm_num_fields> mapped_value;
@@ -155,7 +153,7 @@ private:
     // 1 less then that. when there is a request to append the last one, they
     // will all be columnar-projected and encoded in the encoders, so this
     // buffer will never fill to full capacity
-    segment_meta_buffer _in_buffer{};
+    std::array<segment_meta, details::FOR_buffer_depth - 1> _in_buffer{};
 
     // size doubles down as an index in _in_buffer, since _frame_fields contains
     // N*details::FOR_buffer_depth elements
@@ -168,7 +166,10 @@ public:
     auto get_base_offset() const noexcept -> model::offset;
     auto get_committed_offset() const noexcept -> model::offset;
 
-    struct const_frame_iterator
+    // maybe there is no need to use a proxy_iterator, since he reference will
+    // remain valid as long no operation++ happens. the operator++ happening on
+    // a shared _state will not invalidate ours
+    struct const_frame_iterator final
       : public boost::stl_interfaces::proxy_iterator_interface<
           const_frame_iterator,
           std::forward_iterator_tag,
@@ -179,7 +180,10 @@ public:
           segment_meta>;
         constexpr const_frame_iterator() = default;
         explicit const_frame_iterator(cstore_v2 const& cf);
-        constexpr segment_meta& operator*() const noexcept;
+        constexpr segment_meta const& operator*() const noexcept {
+            vassert(_state, "invariant: _state is valid if this is not end");
+            return _state->get();
+        }
         constexpr const_frame_iterator& operator++() noexcept;
         friend constexpr bool operator==(
           const_frame_iterator const& lhs,
@@ -189,12 +193,9 @@ public:
         using base_type::operator++;
 
     private:
-        bool state_is_shared() const noexcept { return !_state.owned(); }
-
-        void clone_state() const {
-            // assert _state
-            _state = ss::make_lw_shared(_state->clone());
-        }
+        // this is meant to be called from a non const method to ensure that a
+        // destructive op does not touch other shared state
+        void ensure_owned();
         // if this iterator is not end, this value is the actual base_offset of
         // the pointed segment_meta if this iterator is end, this value is the
         // sentinel value model::offset, and this an invariant of the iterator:
@@ -210,43 +211,50 @@ public:
             // invariant: size() means _uncompressed_head is empty and needs to
             // be decompressed
             uint8_t _head_ptr = _uncompressed_head.size();
-
+            uint8_t _trailing_ptr = {0};
             uint8_t _trailing_sz;
-            segment_meta_buffer _trailing_sm;
+            std::array<segment_meta, details::FOR_buffer_depth - 1>
+              _trailing_sm;
 
             std::vector<ss::lw_shared_ptr<const w_state>> _frames_to_read;
+
             explicit state(cstore_v2 const& cs)
               : _trailing_sz{uint8_t(cs.size() % details::FOR_buffer_depth)}
               , _trailing_sm{cs._in_buffer}
               , _frames_to_read(
                   cs._encoded_state.begin(), cs._encoded_state.end()) {}
 
-            auto clone() const -> state {
-                auto res = state{};
-                res._head_ptr = _head_ptr;
-                // just copy forward data
-                for (auto i = size_t(_head_ptr); i < _uncompressed_head.size();
-                     ++i) {
-                    res._uncompressed_head[i] = _uncompressed_head[i];
-                }
-                res._trailing_sz = _trailing_sz;
-                for (auto i = size_t(0); i < _trailing_sz; ++i) {
-                    res._trailing_sm[i] = _trailing_sm[i];
+            // let's be explicit: clone or share, no implicit copy op allowed
+            state(state const&) = delete;
+            state& operator=(state const&) = delete;
+            // move op are allowed
+            state(state&& rhs) noexcept = default;
+            state& operator=(state&&) noexcept = default;
+
+            // clone performs a "deep" clone such as destructive op on this do
+            // not modify the returned object
+            auto clone() const -> state;
+
+            auto get() const -> segment_meta const& {
+                vassert(
+                  (_head_ptr < _uncompressed_head.size() && _trailing_ptr == 0)
+                    || (_head_ptr == _uncompressed_head.size() && _trailing_ptr < _trailing_sz),
+                  "ensure invariants about the two buffers: that the either "
+                  "the head is being consumed or that the trailer is begin "
+                  "consumed (without being terminaned, since that would be "
+                  "like accessing end())");
+                if (_head_ptr < _uncompressed_head.size()) {
+                    return _uncompressed_head[_head_ptr];
                 }
 
-                // create a clone from the original cstore iobuf
-                res._active_frame = _active_frame.clone();
-                // copy the frames after this that will be read after the active
-                // frame
-                res._frames_to_read = _frames_to_read;
-                return res;
+                return _trailing_sm[_trailing_ptr];
             }
 
         private:
             state() = default;
         };
         // invariant: _state is valid if this is not end pointer
-        mutable ss::lw_shared_ptr<state> _state{};
+        ss::lw_shared_ptr<state> _state{};
     };
 
     BOOST_STL_INTERFACES_STATIC_ASSERT_CONCEPT(
@@ -332,6 +340,31 @@ cstore_v2::const_frame_iterator::const_frame_iterator(cstore_v2 const& cf)
   : _pseudo_base_offset(cf.get_base_offset())
   , _state(ss::make_lw_shared<state>(cf)) {}
 
+auto cstore_v2::const_frame_iterator::state::clone() const -> state {
+    auto res = state{};
+    res._head_ptr = _head_ptr;
+    // just copy forward data
+    for (auto i = size_t(_head_ptr); i < _uncompressed_head.size(); ++i) {
+        res._uncompressed_head[i] = _uncompressed_head[i];
+    }
+    res._trailing_ptr = _trailing_ptr;
+    res._trailing_sz = _trailing_sz;
+    for (auto i = size_t(_trailing_ptr); i < _trailing_sz; ++i) {
+        res._trailing_sm[i] = _trailing_sm[i];
+    }
+
+    // create a clone from the original cstore iobuf
+    res._active_frame = _active_frame.clone();
+    // copy the frames after this that will be read after the active
+    // frame
+    res._frames_to_read = _frames_to_read;
+    return res;
+}
+void cstore_v2::const_frame_iterator::ensure_owned() {
+    if (!_state.owned()) {
+        _state = ss::make_lw_shared(_state->clone());
+    }
+}
 } // namespace cloud_storage
 
 BOOST_AUTO_TEST_SUITE(test_suite_cstore_v2);
