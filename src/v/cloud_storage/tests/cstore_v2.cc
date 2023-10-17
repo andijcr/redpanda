@@ -65,28 +65,9 @@ private:
         decoder_tuple_t _frame_fields{};
         auto empty() const { return std::get<0>(_frame_fields).empty(); }
 
-        auto clone() const -> r_state {
-            if (empty()) {
-                return {};
-            }
-            // get a pristine r_state
-            auto res = _parent->get_r_state();
-            // fix up the _frame_fields by skipping ahead
-            [&]<size_t... Is>(std::index_sequence<Is...>) {
-                // get a copy of all the skip info
-                auto pos_tuple = std::tuple{
-                  std::get<Is>(_frame_fields)
-                    .get_pos()
-                    .to_stream_pos_t(std::get<Is>(_parent->_frame_fields)
-                                       .get_position()
-                                       .offset)...};
-                // apply them
-                (std::get<Is>(res._frame_fields).skip(std::get<Is>(pos_tuple)),
-                 ...);
-            }(std::make_index_sequence<std::tuple_size_v<decoder_tuple_t>>());
-
-            return res;
-        }
+        auto clone() const -> r_state;
+        void uncompress(
+          std::span<segment_meta, details::FOR_buffer_depth> out) noexcept;
     };
     struct w_state : public ss::enable_lw_shared_from_this<w_state> {
         // NOTEANDREA should be possible to have an upper bound and move this to
@@ -191,19 +172,21 @@ public:
             vassert(_state, "invariant: _state is valid if this is not end");
             if (_state->is_last_one()) {
                 _state.release();
-                _pseudo_base_offset = model::offset();
                 return *this;
             }
 
             ensure_owned();
             _state->advance();
-            _pseudo_base_offset = _state->get().base_offset;
             return *this;
         }
         friend constexpr bool operator==(
           const_frame_iterator const& lhs,
           const_frame_iterator const& rhs) noexcept {
-            return lhs._pseudo_base_offset == rhs._pseudo_base_offset;
+            auto lhs_base_off = lhs._state ? lhs._state->get().base_offset
+                                           : model::offset();
+            auto rhs_base_off = rhs._state ? rhs._state->get().base_offset
+                                           : model::offset();
+            return lhs_base_off == rhs_base_off;
         }
         using base_type::operator++;
 
@@ -211,12 +194,7 @@ public:
         // this is meant to be called from a non const method to ensure that a
         // destructive op does not touch other shared state
         void ensure_owned();
-        // if this iterator is not end, this value is the actual base_offset of
-        // the pointed segment_meta if this iterator is end, this value is the
-        // sentinel value model::offset, and this an invariant of the iterator:
-        // if the data pointed to is exhausted, this value is set to
-        // model::offset
-        model::offset _pseudo_base_offset{};
+
         // state is expensive, since this is a const_iterator it makes sense to
         // store it in a shared pointer with a copy_on_write mechanism
         struct state {
@@ -226,7 +204,8 @@ public:
             // invariant: size() means _uncompressed_head is empty and needs to
             // be decompressed
             uint8_t _head_ptr = _uncompressed_head.size();
-            uint8_t _trailing_ptr = {0};
+            int8_t _trailing_ptr = {
+              -1}; // see advance() to see why the starting value is -1
             uint8_t _trailing_sz = {0};
             std::array<segment_meta, details::FOR_buffer_depth - 1>
               _trailing_sm;
@@ -268,7 +247,7 @@ public:
             auto is_last_one() const noexcept -> bool;
 
             // performs ++
-            auto advance() const noexcept -> model::offset;
+            void advance() noexcept;
 
         private:
             state() = default;
@@ -357,8 +336,7 @@ auto cstore_v2::get_committed_offset() const noexcept -> model::offset {
     return _encoded_state.back()->get_commited_offset();
 }
 cstore_v2::const_frame_iterator::const_frame_iterator(cstore_v2 const& cf)
-  : _pseudo_base_offset(cf.get_base_offset())
-  , _state(ss::make_lw_shared<state>(cf)) {}
+  : _state(ss::make_lw_shared<state>(cf)) {}
 
 auto cstore_v2::const_frame_iterator::state::clone() const -> state {
     check_valid(); // not strictly needed but it's useful to limit the number of
@@ -420,6 +398,75 @@ auto cstore_v2::const_frame_iterator::state::is_last_one() const noexcept
 
     return false;
 }
+
+void cstore_v2::const_frame_iterator::state::advance() noexcept {
+    check_valid();
+
+    _head_ptr = std::min<uint8_t>(_head_ptr + 1, _uncompressed_head.size());
+
+    if (_head_ptr == _uncompressed_head.size()) {
+        // reached the end of the head buffer, try to uncompress further data
+        if (_active_frame.empty()) {
+            // _active_frame has no more data, create a new one from the next
+            // _frame
+            if (_frames_to_read.empty()) {
+                // there are no more frames, we terminated all the compressed
+                // data. time to access _trailing_sm since _trailing_ptr starts
+                // at -1, the first increment will bring it to 0 and we don't
+                // have to special case it
+                ++_trailing_ptr;
+                return;
+            }
+            _active_frame = _frames_to_read.front()->get_r_state();
+            _frames_to_read.erase(_frames_to_read.begin());
+            // ensure _active_frame has data to uncompress
+        }
+        // uncompress data
+        // set back _head_ptr to the start of the buffer
+        _head_ptr = 0;
+    }
+}
+
+auto cstore_v2::r_state::clone() const -> r_state {
+    if (empty()) {
+        return {};
+    }
+    // get a pristine r_state
+    auto res = _parent->get_r_state();
+    // fix up the _frame_fields by skipping ahead
+    [&]<size_t... Is>(std::index_sequence<Is...>) {
+        // get a copy of all the skip info
+        auto pos_tuple = std::tuple{
+          std::get<Is>(_frame_fields)
+            .get_pos()
+            .to_stream_pos_t(
+              std::get<Is>(_parent->_frame_fields).get_position().offset)...};
+        // apply them
+        (std::get<Is>(res._frame_fields).skip(std::get<Is>(pos_tuple)), ...);
+    }(std::make_index_sequence<std::tuple_size_v<decoder_tuple_t>>());
+
+    return res;
+}
+
+void cstore_v2::r_state::uncompress(
+  std::span<segment_meta, details::FOR_buffer_depth> out) noexcept {
+    std::array<int64_t, details::FOR_buffer_depth> buffer;
+    [&]<size_t... Is>(std::index_sequence<Is...>) {
+        // uncompress each column into a intermediate buffer, save it in out
+        (
+          [&] {
+              std::get<Is>(_frame_fields).read(buffer);
+
+              for (auto i = 0u; i < buffer.size(); i++) {
+                  auto& field_is = std::get<Is>(reflection::to_tuple(out[i]));
+                  field_is = static_cast<std::decay_t<decltype(field_is)>>(
+                    buffer[i]);
+              }
+          }(),
+          ...);
+    }(std::make_index_sequence<std::tuple_size_v<decoder_tuple_t>>());
+}
+
 } // namespace cloud_storage
 
 BOOST_AUTO_TEST_SUITE(test_suite_cstore_v2);
