@@ -58,17 +58,23 @@ private:
     // create a copy-on-write structure
 
     struct w_state;
+
+    // struct used by const_iterator to read from a w_state.
     struct r_state {
         // parent is used to implement copy-on-write, since _frame_fields share
         // buffers with _parent
-        ss::lw_shared_ptr<const w_state> _parent;
+        ss::lw_shared_ptr<const w_state> _parent{};
+        // the compressed data is read through these
         decoder_tuple_t _frame_fields{};
-        auto empty() const { return std::get<0>(_frame_fields).empty(); }
-
+        // true: no more data can be uncompressed
+        auto empty() const noexcept -> bool;
+        // create a clone of r_state such that this->uncompress does not modify
+        // the state of the new r_state
         auto clone() const -> r_state;
-        void uncompress(
-          std::span<segment_meta, details::FOR_buffer_depth> out) noexcept;
+        // uncompress the next batch of segment_meta. modifies _frame_fields
+        void uncompress(std::span<segment_meta, details::FOR_buffer_depth> out);
     };
+
     struct w_state : public ss::enable_lw_shared_from_this<w_state> {
         // NOTEANDREA should be possible to have an upper bound and move this to
         // std::array invariants: this is sorted on key, has few elements, and
@@ -84,6 +90,13 @@ private:
         // deltafor have the same size, together they encode all the
         // segment_meta saved in this frame
         encoder_tuple_t _frame_fields{};
+
+        // disable copy and move since get_w_state generates back-links to this
+        // object
+        w_state(w_state const&) = delete;
+        w_state& operator=(w_state const&) = delete;
+        w_state(w_state&&) = delete;
+        w_state& operator=(w_state&&) = delete;
 
         // used to implement copy-on-write: const_iterator grab a shared_ptr, if
         // some destructive operation (truncate, rewrite, append) has to happen
@@ -111,19 +124,10 @@ private:
                 .get_last_value());
         }
 
-        auto get_r_state() const -> r_state {
-            return {
-              ._parent = shared_from_this(),
-              ._frame_fields =
-                [&]<size_t... Is>(std::index_sequence<Is...>) {
-                    return decoder_tuple_t{decoder_t<Is>{
-                      std::get<Is>(_frame_fields).get_initial_value(),
-                      std::get<Is>(_frame_fields).get_row_count(),
-                      std::get<Is>(_frame_fields).share(),
-                      delta_alg_t<Is>{}}...};
-                }(std::make_index_sequence<
-                  std::tuple_size_v<encoder_tuple_t>>())};
-        };
+        // create a r_state for this w_state. modifications to this could
+        // reflect on w_state, that's why the resulting r_state has a back-link
+        // to this, to implement copy-on-write
+        auto get_r_state() const -> r_state;
     };
 
     // invariant: if _size is > details::FOR_buffer_depth, _encoded_state is not
@@ -147,9 +151,8 @@ public:
     auto get_base_offset() const noexcept -> model::offset;
     auto get_committed_offset() const noexcept -> model::offset;
 
-    // maybe there is no need to use a proxy_iterator, since he reference will
-    // remain valid as long no operation++ happens. the operator++ happening on
-    // a shared _state will not invalidate ours
+    // this is a proxy iterator because references returned by this will not be
+    // valid once the iterator is advanced
     struct const_frame_iterator final
       : public boost::stl_interfaces::proxy_iterator_interface<
           const_frame_iterator,
@@ -159,29 +162,20 @@ public:
           const_frame_iterator,
           std::forward_iterator_tag,
           segment_meta>;
-        constexpr const_frame_iterator() = default;         // end iterator
-        explicit const_frame_iterator(cstore_v2 const& cf); // begin iterator
 
-        // copy and move works as expected, eventually sharing the lw_shared_ptr
-        // _state
-        constexpr segment_meta const& operator*() const noexcept {
-            vassert(_state, "invariant: _state is valid if this is not end");
-            return _state->get();
-        }
-        constexpr const_frame_iterator& operator++() noexcept {
-            vassert(_state, "invariant: _state is valid if this is not end");
-            if (_state->is_last_one()) {
-                _state.release();
-                return *this;
-            }
+        // works as end iterator
+        constexpr const_frame_iterator() = default;
+        // create a begin iterator
+        explicit const_frame_iterator(cstore_v2 const& cf);
+        // copy and move works as expected, sharing the lw_shared_ptr _state
 
-            ensure_owned();
-            _state->advance();
-            return *this;
-        }
+        auto operator*() const noexcept -> segment_meta const&;
+        auto operator++() noexcept -> const_frame_iterator&;
+
         friend constexpr bool operator==(
           const_frame_iterator const& lhs,
           const_frame_iterator const& rhs) noexcept {
+            // get base_offset or default if end iterator
             auto lhs_base_off = lhs._state ? lhs._state->get().base_offset
                                            : model::offset();
             auto rhs_base_off = rhs._state ? rhs._state->get().base_offset
@@ -198,25 +192,26 @@ public:
         // state is expensive, since this is a const_iterator it makes sense to
         // store it in a shared pointer with a copy_on_write mechanism
         struct state {
+            // array to contain data as we uncompress it in batches
             std::array<segment_meta, details::FOR_buffer_depth>
               _uncompressed_head{};
+            // contains the decoder where compressed data is read from
             r_state _active_frame{};
-            // invariant: size() means _uncompressed_head is empty and needs to
-            // be decompressed
+            // index into _uncompressed_head, or size() to mean empty
             uint8_t _head_ptr = _uncompressed_head.size();
-            int8_t _trailing_ptr = {
-              -1}; // see advance() to see why the starting value is -1
+            // index into _trailing_sm, see advance() to see why the starting
+            // value is -1
+            int8_t _trailing_ptr = {-1};
+            // save how many segments are in _trailing_sm
             uint8_t _trailing_sz = {0};
+            // array for trailing segment_ms. it's 1 less than the buffer
             std::array<segment_meta, details::FOR_buffer_depth - 1>
               _trailing_sm;
-
+            // vector of w_states to read next after _active_frame is exhausted
             std::vector<ss::lw_shared_ptr<const w_state>> _frames_to_read;
 
-            explicit state(cstore_v2 const& cs)
-              : _trailing_sz{uint8_t(cs.size() % details::FOR_buffer_depth)}
-              , _trailing_sm{cs._in_buffer}
-              , _frames_to_read(
-                  cs._encoded_state.begin(), cs._encoded_state.end()) {}
+            // construct a state for a begin iterator
+            explicit state(cstore_v2 const& cs);
 
             // let's be explicit: clone or share, no implicit copy op allowed
             state(state const&) = delete;
@@ -226,30 +221,22 @@ public:
             state& operator=(state&&) noexcept = default;
             ~state() = default;
 
-            void check_valid() const {
-                vassert(
-                  (_head_ptr < _uncompressed_head.size() && _trailing_ptr == 0)
-                    || (_head_ptr == _uncompressed_head.size() && _trailing_ptr < _trailing_sz),
-                  "ensure invariants about the two buffers: that the either "
-                  "the head is being consumed or that the trailer is begin "
-                  "consumed (without being terminaned, since that would be "
-                  "like accessing end())");
-            }
+            // assert on the invariants of this state
+            void check_valid() const;
             // clone performs a "deep" clone such as destructive op on this do
             // not modify the returned object
             auto clone() const -> state;
             // get current segment_meta (either from the head_buffer or from the
             // trailing buffer)
             auto get() const -> segment_meta const&;
-
             // we are interested to check if incrementing this would leads to
             // reaching end
             auto is_last_one() const noexcept -> bool;
-
             // performs ++
             void advance() noexcept;
 
         private:
+            // this constructor is used only by clone
             state() = default;
         };
         // invariant: _state is valid if this is not end pointer
@@ -338,6 +325,40 @@ auto cstore_v2::get_committed_offset() const noexcept -> model::offset {
 cstore_v2::const_frame_iterator::const_frame_iterator(cstore_v2 const& cf)
   : _state(ss::make_lw_shared<state>(cf)) {}
 
+auto cstore_v2::const_frame_iterator::operator*() const noexcept
+  -> segment_meta const& {
+    vassert(_state, "invariant: _state is valid if this is not end");
+    return _state->get();
+}
+auto cstore_v2::const_frame_iterator::operator++() noexcept
+  -> const_frame_iterator& {
+    vassert(_state, "invariant: _state is valid if this is not end");
+    if (_state->is_last_one()) {
+        // advancing the state would land us in the end iterator, so release the
+        // state to become an end iterator
+        _state.release();
+        return *this;
+    }
+
+    ensure_owned();
+    _state->advance();
+    return *this;
+}
+
+cstore_v2::const_frame_iterator::state::state(cstore_v2 const& cs)
+  : _trailing_sz{uint8_t(cs.size() % details::FOR_buffer_depth)}
+  , _trailing_sm{cs._in_buffer}
+  , _frames_to_read(cs._encoded_state.begin(), cs._encoded_state.end()) {}
+
+void cstore_v2::const_frame_iterator::state::check_valid() const {
+    vassert(
+      (_head_ptr < _uncompressed_head.size() && _trailing_ptr == 0)
+        || (_head_ptr == _uncompressed_head.size() && _trailing_ptr < _trailing_sz),
+      "ensure invariants about the two buffers: that the either "
+      "the head is being consumed or that the trailer is begin "
+      "consumed (without being terminaned, since that would be "
+      "like accessing end())");
+}
 auto cstore_v2::const_frame_iterator::state::clone() const -> state {
     check_valid(); // not strictly needed but it's useful to limit the number of
                    // possible states of the system
@@ -427,8 +448,15 @@ void cstore_v2::const_frame_iterator::state::advance() noexcept {
     }
 }
 
+auto cstore_v2::r_state::empty() const noexcept -> bool {
+    // any frame would be ok but since it's the main index, use base_offset
+    // frame
+    return std::get<sm_base_offset_position>(_frame_fields).empty();
+}
+
 auto cstore_v2::r_state::clone() const -> r_state {
     if (empty()) {
+        // every empty r_state is the same
         return {};
     }
     // get a pristine r_state
@@ -449,10 +477,11 @@ auto cstore_v2::r_state::clone() const -> r_state {
 }
 
 void cstore_v2::r_state::uncompress(
-  std::span<segment_meta, details::FOR_buffer_depth> out) noexcept {
+  std::span<segment_meta, details::FOR_buffer_depth> out) {
     std::array<int64_t, details::FOR_buffer_depth> buffer;
     [&]<size_t... Is>(std::index_sequence<Is...>) {
         // uncompress each column into a intermediate buffer, save it in out
+        // array
         (
           [&] {
               std::get<Is>(_frame_fields).read(buffer);
@@ -465,8 +494,25 @@ void cstore_v2::r_state::uncompress(
           }(),
           ...);
     }(std::make_index_sequence<std::tuple_size_v<decoder_tuple_t>>());
+
+    if (empty()) {
+        // micro optimization: releases parent so that it can be free to self
+        // modify
+        _parent.release();
+    }
 }
 
+auto cstore_v2::w_state::get_r_state() const -> r_state {
+    return {
+      ._parent = shared_from_this(),
+      ._frame_fields = [&]<size_t... Is>(std::index_sequence<Is...>) {
+          return decoder_tuple_t{decoder_t<Is>{
+            std::get<Is>(_frame_fields).get_initial_value(),
+            std::get<Is>(_frame_fields).get_row_count(),
+            std::get<Is>(_frame_fields).share(),
+            delta_alg_t<Is>{}}...};
+      }(std::make_index_sequence<std::tuple_size_v<encoder_tuple_t>>())};
+};
 } // namespace cloud_storage
 
 BOOST_AUTO_TEST_SUITE(test_suite_cstore_v2);
