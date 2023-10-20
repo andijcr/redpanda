@@ -165,8 +165,9 @@ public:
 
         // works as end iterator
         constexpr const_frame_iterator() = default;
-        // create a begin iterator
-        explicit const_frame_iterator(cstore_v2 const& cf);
+        // create an iterator with data
+        template<typename Rng>
+        explicit const_frame_iterator(std::span<const segment_meta> trailing_buf, Rng&& encoded_frames_range);
         // copy and move works as expected, sharing the lw_shared_ptr _state
 
         auto operator*() const noexcept -> segment_meta const&;
@@ -210,8 +211,8 @@ public:
             // vector of w_states to read next after _active_frame is exhausted
             std::vector<ss::lw_shared_ptr<const w_state>> _frames_to_read;
 
-            // construct a state for a begin iterator
-            explicit state(cstore_v2 const& cs);
+            // construct a state for a range of frames
+            explicit state(std::span<const segment_meta> trailing_buf, auto&& encoded_frames_range);
 
             // let's be explicit: clone or share, no implicit copy op allowed
             state(state const&) = delete;
@@ -261,7 +262,7 @@ public:
     cstore_v2& operator=(cstore_v2&&);
 
     inline const_frame_iterator begin() {
-        return empty() ? end() : const_frame_iterator{*this};
+        return empty() ? end() : const_frame_iterator{std::span{cf._in_buffer}.first(cf.size() % details::FOR_buffer_depth), cf._encoded_state};
     }
     inline const_frame_iterator end() { return {}; }
     void swap(cstore_v2& rhs) noexcept;
@@ -272,7 +273,32 @@ public:
 
     // providing these offers some other possibilities
     cstore_v2(const_iterator const&, const_iterator const&);
+
+
+
+    // search methods
+
+    // search by base offset
+    auto find(model::offset) const noexcept -> const_frame_iterator;
 };
+
+auto cstore_v2::find(model::offset base_offset) const noexcept -> const_frame_iterator {
+  // search a frame that might contain the base offset
+  auto it=std::ranges::lower_bound(_encoded_state, base_offset, std::less<>{}, [](auto& ptr){return ptr->get_base_offset();});
+  if(it== _encoded_state.end()){
+    // base offset could be in the in_buffer still
+    auto buff_it=std::ranges::find(_in_buffer | std::views::take(_size% details::FOR_buffer_depth), base_offset, std::less<>{}, [](auto& sm){return ptr.base_offset;});
+    if(buff_it==_in_buffer.end()){
+      return end();
+    }
+
+    auto result_it= const_frame_iterator{std::span{_in_buffer}.first(_size% details::FOR_buffer_depth), std::ranges::subrange{_encoded_state.end(), _encoded_state.end()}};
+    return std::next(result_it, std::distance(_in_buffer.begin(), buff_it));
+  }
+
+  // stuff here
+}   
+
 
 void cstore_v2::swap(cstore_v2& rhs) noexcept {
     if (this == &rhs) {
@@ -322,8 +348,10 @@ auto cstore_v2::get_committed_offset() const noexcept -> model::offset {
 
     return _encoded_state.back()->get_commited_offset();
 }
-cstore_v2::const_frame_iterator::const_frame_iterator(cstore_v2 const& cf)
-  : _state(ss::make_lw_shared<state>(cf)) {}
+
+template<typename Rng>
+cstore_v2::const_frame_iterator::const_frame_iterator(std::span<const segment_meta> trailing_buf, Rng&& encoded_frames_range)
+  : _state(trailing_buf, std::forward<Rng>(encoded_frames_range)) {}
 
 auto cstore_v2::const_frame_iterator::operator*() const noexcept
   -> segment_meta const& {
@@ -344,6 +372,9 @@ auto cstore_v2::const_frame_iterator::operator++() noexcept
     _state->advance();
     return *this;
 }
+
+
+cstore_v2::const_frame_iterator::state::state(std::span<const segment_meta> trailing_buf, auto&& encoded_frames_range): _trailing_sz(trailing_buf.size()), _frames_to_read(std::ranges::begin(encoded_frames_range), std::ranges::end(encoded_frames_range)) {}
 
 cstore_v2::const_frame_iterator::state::state(cstore_v2 const& cs)
   : _trailing_sz{uint8_t(cs.size() % details::FOR_buffer_depth)}
