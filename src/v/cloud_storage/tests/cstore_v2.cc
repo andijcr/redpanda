@@ -167,7 +167,9 @@ public:
         constexpr const_frame_iterator() = default;
         // create an iterator with data
         template<typename Rng>
-        explicit const_frame_iterator(std::span<const segment_meta> trailing_buf, Rng&& encoded_frames_range);
+        explicit const_frame_iterator(
+          std::span<const segment_meta> trailing_buf,
+          Rng&& encoded_frames_range);
         // copy and move works as expected, sharing the lw_shared_ptr _state
 
         auto operator*() const noexcept -> segment_meta const&;
@@ -212,7 +214,9 @@ public:
             std::vector<ss::lw_shared_ptr<const w_state>> _frames_to_read;
 
             // construct a state for a range of frames
-            explicit state(std::span<const segment_meta> trailing_buf, auto&& encoded_frames_range);
+            explicit state(
+              std::span<const segment_meta> trailing_buf,
+              auto&& encoded_frames_range);
 
             // let's be explicit: clone or share, no implicit copy op allowed
             state(state const&) = delete;
@@ -262,7 +266,11 @@ public:
     cstore_v2& operator=(cstore_v2&&);
 
     inline const_frame_iterator begin() {
-        return empty() ? end() : const_frame_iterator{std::span{cf._in_buffer}.first(cf.size() % details::FOR_buffer_depth), cf._encoded_state};
+        return empty() ? end()
+                       : const_frame_iterator{
+                         std::span{cf._in_buffer}.first(
+                           cf.size() % details::FOR_buffer_depth),
+                         cf._encoded_state};
     }
     inline const_frame_iterator end() { return {}; }
     void swap(cstore_v2& rhs) noexcept;
@@ -274,31 +282,89 @@ public:
     // providing these offers some other possibilities
     cstore_v2(const_iterator const&, const_iterator const&);
 
-
-
     // search methods
 
     // search by base offset
     auto find(model::offset) const noexcept -> const_frame_iterator;
 };
 
-auto cstore_v2::find(model::offset base_offset) const noexcept -> const_frame_iterator {
-  // search a frame that might contain the base offset
-  auto it=std::ranges::lower_bound(_encoded_state, base_offset, std::less<>{}, [](auto& ptr){return ptr->get_base_offset();});
-  if(it== _encoded_state.end()){
-    // base offset could be in the in_buffer still
-    auto buff_it=std::ranges::find(_in_buffer | std::views::take(_size% details::FOR_buffer_depth), base_offset, std::less<>{}, [](auto& sm){return ptr.base_offset;});
-    if(buff_it==_in_buffer.end()){
-      return end();
+/// it's like lower bound in the mathematical sense:
+/// return: an iterator to the element equal to val or to the biggest element
+/// __less__ than val. if no element is the mathematical lower bound, return
+/// end. this is not strictly math-consistent but works ok in the context of
+/// iterators
+static auto
+find_val_or_less(auto&& rng, auto val, auto projection = std::identity{}) {
+    if (rng.empty()) {
+        return rng.end();
+    }
+    // std::lower_bound does not return std::end(), so we can skip that check
+    auto it = std::ranges::lower_bound(rng, val, std::less<>{}, projection);
+    // exact match
+    if (*it == val) {
+        return it;
     }
 
-    auto result_it= const_frame_iterator{std::span{_in_buffer}.first(_size% details::FOR_buffer_depth), std::ranges::subrange{_encoded_state.end(), _encoded_state.end()}};
-    return std::next(result_it, std::distance(_in_buffer.begin(), buff_it));
-  }
+    // no value can satisfy the search, since *it is greater than val here
+    if (it == rng.begin()) {
+        return rng.end();
+    }
 
-  // stuff here
-}   
+    // there is no element equal to val, but since *it is greater than val the
+    // prev satisfy the search
+    return std::prev(it);
+}
 
+auto cstore_v2::find(model::offset base_offset) const noexcept
+  -> const_frame_iterator {
+    // small optimization: ensure that base_offset might be in the range covered
+    // by this
+    if (
+      base_offset < get_base_offset() || base_offset > get_committed_offset()) {
+        return end();
+    }
+
+    // search a frame that might contain the base offset
+    auto it = find_val_or_less(
+      _encoded_state, base_offset, &w_state::get_base_offset);
+    if (it == _encoded_state.end()) {
+        // base offset could be in the in_buffer still
+        auto buff_it = std::ranges::find(
+          _in_buffer | std::views::take(_size % details::FOR_buffer_depth),
+          base_offset,
+          std::less<>{},
+          [](auto& sm) { return ptr.base_offset; });
+        if (buff_it == _in_buffer.end()) {
+            return end();
+        }
+
+        auto result_it = const_frame_iterator{
+          std::span{_in_buffer}.first(_size % details::FOR_buffer_depth),
+          std::ranges::subrange{_encoded_state.end(), _encoded_state.end()}};
+        return std::next(result_it, std::distance(_in_buffer.begin(), buff_it));
+    }
+
+    auto& frame_hints = (*it)->_frame_hints;
+    auto hint_it = find_val_or_less(frame_hints, base_offset, &hint_t::key);
+
+    // it points to a frame that might contain the base offset, start a
+    // const_frame_iterator from it
+    auto candidate = const_frame_iterator{
+      std::span{_in_buffer}.first(_size % details::FOR_buffer_depth),
+      std::ranges::subrange{it, _encoded_state.end()}};
+    if (hint_it != frame_hints.end()) {
+        candidate.skip(hint_it->mapped_values);
+    }
+    // advance candidate
+    for (; candidate->base_offset < base_offset; ++candidate) {
+    }
+
+    if (candidate->base_offset == base_offset) {
+        return candidate;
+    }
+
+    return end();
+}
 
 void cstore_v2::swap(cstore_v2& rhs) noexcept {
     if (this == &rhs) {
@@ -310,8 +376,8 @@ void cstore_v2::swap(cstore_v2& rhs) noexcept {
 }
 
 bool cstore_v2::operator==(cstore_v2 const& rhs) const noexcept {
-    // exclude hints, as they are just a lookup optimization. compare fields in
-    // order of simplicity
+    // exclude hints, as they are just a lookup optimization. compare
+    // fields in order of simplicity
     constexpr static auto to_reference = [](auto& ptr) -> decltype(auto) {
         return *ptr;
     };
@@ -350,7 +416,8 @@ auto cstore_v2::get_committed_offset() const noexcept -> model::offset {
 }
 
 template<typename Rng>
-cstore_v2::const_frame_iterator::const_frame_iterator(std::span<const segment_meta> trailing_buf, Rng&& encoded_frames_range)
+cstore_v2::const_frame_iterator::const_frame_iterator(
+  std::span<const segment_meta> trailing_buf, Rng&& encoded_frames_range)
   : _state(trailing_buf, std::forward<Rng>(encoded_frames_range)) {}
 
 auto cstore_v2::const_frame_iterator::operator*() const noexcept
@@ -362,8 +429,8 @@ auto cstore_v2::const_frame_iterator::operator++() noexcept
   -> const_frame_iterator& {
     vassert(_state, "invariant: _state is valid if this is not end");
     if (_state->is_last_one()) {
-        // advancing the state would land us in the end iterator, so release the
-        // state to become an end iterator
+        // advancing the state would land us in the end iterator, so
+        // release the state to become an end iterator
         _state.release();
         return *this;
     }
@@ -373,8 +440,12 @@ auto cstore_v2::const_frame_iterator::operator++() noexcept
     return *this;
 }
 
-
-cstore_v2::const_frame_iterator::state::state(std::span<const segment_meta> trailing_buf, auto&& encoded_frames_range): _trailing_sz(trailing_buf.size()), _frames_to_read(std::ranges::begin(encoded_frames_range), std::ranges::end(encoded_frames_range)) {}
+cstore_v2::const_frame_iterator::state::state(
+  std::span<const segment_meta> trailing_buf, auto&& encoded_frames_range)
+  : _trailing_sz(trailing_buf.size())
+  , _frames_to_read(
+      std::ranges::begin(encoded_frames_range),
+      std::ranges::end(encoded_frames_range)) {}
 
 cstore_v2::const_frame_iterator::state::state(cstore_v2 const& cs)
   : _trailing_sz{uint8_t(cs.size() % details::FOR_buffer_depth)}
@@ -391,8 +462,8 @@ void cstore_v2::const_frame_iterator::state::check_valid() const {
       "like accessing end())");
 }
 auto cstore_v2::const_frame_iterator::state::clone() const -> state {
-    check_valid(); // not strictly needed but it's useful to limit the number of
-                   // possible states of the system
+    check_valid(); // not strictly needed but it's useful to limit the
+                   // number of possible states of the system
     auto res = state{};
     res._head_ptr = _head_ptr;
     // just copy forward data
@@ -430,8 +501,8 @@ auto cstore_v2::const_frame_iterator::state::get() const
 auto cstore_v2::const_frame_iterator::state::is_last_one() const noexcept
   -> bool {
     check_valid();
-    // if no more data in the buffers, then there should be only one in the
-    // trailer
+    // if no more data in the buffers, then there should be only one
+    // in the trailer
     if (
       _head_ptr == _uncompressed_head.size()
       && std::get<sm_base_offset_position>(_active_frame._frame_fields).empty()
@@ -439,8 +510,9 @@ auto cstore_v2::const_frame_iterator::state::is_last_one() const noexcept
         return _trailing_ptr == (_trailing_sz - 1);
     }
 
-    // if there is data in the head buffer, it must be only one datapoint and
-    // buffers need to be empty and no other data should be in the trailer
+    // if there is data in the head buffer, it must be only one
+    // datapoint and buffers need to be empty and no other data should
+    // be in the trailer
     if (_head_ptr == _uncompressed_head.size() - 1) {
         return _trailing_sz == 0
                && std::get<sm_base_offset_position>(_active_frame._frame_fields)
@@ -457,15 +529,17 @@ void cstore_v2::const_frame_iterator::state::advance() noexcept {
     _head_ptr = std::min<uint8_t>(_head_ptr + 1, _uncompressed_head.size());
 
     if (_head_ptr == _uncompressed_head.size()) {
-        // reached the end of the head buffer, try to uncompress further data
+        // reached the end of the head buffer, try to uncompress
+        // further data
         if (_active_frame.empty()) {
-            // _active_frame has no more data, create a new one from the next
-            // _frame
+            // _active_frame has no more data, create a new one from
+            // the next _frame
             if (_frames_to_read.empty()) {
-                // there are no more frames, we terminated all the compressed
-                // data. time to access _trailing_sm since _trailing_ptr starts
-                // at -1, the first increment will bring it to 0 and we don't
-                // have to special case it
+                // there are no more frames, we terminated all the
+                // compressed data. time to access _trailing_sm since
+                // _trailing_ptr starts at -1, the first increment
+                // will bring it to 0 and we don't have to special
+                // case it
                 ++_trailing_ptr;
                 return;
             }
@@ -480,8 +554,8 @@ void cstore_v2::const_frame_iterator::state::advance() noexcept {
 }
 
 auto cstore_v2::r_state::empty() const noexcept -> bool {
-    // any frame would be ok but since it's the main index, use base_offset
-    // frame
+    // any frame would be ok but since it's the main index, use
+    // base_offset frame
     return std::get<sm_base_offset_position>(_frame_fields).empty();
 }
 
@@ -511,8 +585,8 @@ void cstore_v2::r_state::uncompress(
   std::span<segment_meta, details::FOR_buffer_depth> out) {
     std::array<int64_t, details::FOR_buffer_depth> buffer;
     [&]<size_t... Is>(std::index_sequence<Is...>) {
-        // uncompress each column into a intermediate buffer, save it in out
-        // array
+        // uncompress each column into a intermediate buffer, save it
+        // in out array
         (
           [&] {
               std::get<Is>(_frame_fields).read(buffer);
@@ -527,8 +601,8 @@ void cstore_v2::r_state::uncompress(
     }(std::make_index_sequence<std::tuple_size_v<decoder_tuple_t>>());
 
     if (empty()) {
-        // micro optimization: releases parent so that it can be free to self
-        // modify
+        // micro optimization: releases parent so that it can be free
+        // to self modify
         _parent.release();
     }
 }
