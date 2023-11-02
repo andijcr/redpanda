@@ -7,6 +7,7 @@
 #include <boost/stl_interfaces/sequence_container_interface.hpp>
 #include <boost/test/unit_test.hpp>
 
+#include <ranges>
 namespace cloud_storage {
 
 struct cstore_v2
@@ -170,6 +171,14 @@ public:
         explicit const_frame_iterator(
           std::span<const segment_meta> trailing_buf,
           Rng&& encoded_frames_range);
+        // create and iterator with data and an optional hint for the first
+        // buffer (nullptr of emtpy)
+        template<typename Rng>
+        explicit const_frame_iterator(
+          std::span<const segment_meta> trailing_buf,
+          Rng&& encoded_frames_range,
+          hint_t const* maybe_hint);
+
         // copy and move works as expected, sharing the lw_shared_ptr _state
 
         auto operator*() const noexcept -> segment_meta const&;
@@ -213,10 +222,12 @@ public:
             // vector of w_states to read next after _active_frame is exhausted
             std::vector<ss::lw_shared_ptr<const w_state>> _frames_to_read;
 
-            // construct a state for a range of frames
+            // construct a state from a range of frames, and performa an
+            // optional skip operation also prime the pump
             explicit state(
               std::span<const segment_meta> trailing_buf,
-              auto&& encoded_frames_range);
+              auto&& encoded_frames_range,
+              hint_t const* maybe_hint = nullptr);
 
             // let's be explicit: clone or share, no implicit copy op allowed
             state(state const&) = delete;
@@ -238,7 +249,7 @@ public:
             // reaching end
             auto is_last_one() const noexcept -> bool;
             // performs ++
-            void advance() noexcept;
+            void advance(hint_t const* hint = nullptr) noexcept;
 
         private:
             // this constructor is used only by clone
@@ -259,20 +270,29 @@ public:
     using difference_type = std::ptrdiff_t;
     using size_type = std::size_t;
 
+    // Since we're getting so many overloads from
+    // sequence_container_interface, and since many of those overloads are
+    // implemented in terms of a user-defined function of the same name, we
+    // need to add quite a few using declarations here.
+    using base_type
+      = boost::stl_interfaces::sequence_container_interface<cstore_v2>;
+    using base_type::begin;
+    using base_type::end;
+
     cstore_v2() = default;
     cstore_v2(cstore_v2 const&);
     cstore_v2& operator=(cstore_v2 const&);
     cstore_v2(cstore_v2&&);
     cstore_v2& operator=(cstore_v2&&);
 
-    inline const_frame_iterator begin() {
+    auto begin() -> const_frame_iterator {
         return empty() ? end()
                        : const_frame_iterator{
-                         std::span{cf._in_buffer}.first(
-                           cf.size() % details::FOR_buffer_depth),
-                         cf._encoded_state};
+                         std::span{_in_buffer}.first(
+                           size() % details::FOR_buffer_depth),
+                         _encoded_state};
     }
-    inline const_frame_iterator end() { return {}; }
+    auto end() -> const_frame_iterator { return {}; }
     void swap(cstore_v2& rhs) noexcept;
     size_t max_size() const;
     // these could be inherited by sequence_container but we can do better
@@ -293,15 +313,14 @@ public:
 /// __less__ than val. if no element is the mathematical lower bound, return
 /// end. this is not strictly math-consistent but works ok in the context of
 /// iterators
-static auto
-find_val_or_less(auto&& rng, auto val, auto projection = std::identity{}) {
+static auto find_val_or_less(auto&& rng, auto val, auto projection) {
     if (rng.empty()) {
         return rng.end();
     }
     // std::lower_bound does not return std::end(), so we can skip that check
     auto it = std::ranges::lower_bound(rng, val, std::less<>{}, projection);
     // exact match
-    if (*it == val) {
+    if (std::invoke(projection, *it) == val) {
         return it;
     }
 
@@ -329,32 +348,30 @@ auto cstore_v2::find(model::offset base_offset) const noexcept
       _encoded_state, base_offset, &w_state::get_base_offset);
     if (it == _encoded_state.end()) {
         // base offset could be in the in_buffer still
+        auto tail_slice
+          = std::span(_in_buffer).first(_size % details::FOR_buffer_depth);
         auto buff_it = std::ranges::find(
-          _in_buffer | std::views::take(_size % details::FOR_buffer_depth),
-          base_offset,
-          std::less<>{},
-          [](auto& sm) { return ptr.base_offset; });
-        if (buff_it == _in_buffer.end()) {
+          tail_slice, base_offset, &segment_meta::base_offset);
+        if (buff_it == tail_slice.end()) {
             return end();
         }
 
         auto result_it = const_frame_iterator{
           std::span{_in_buffer}.first(_size % details::FOR_buffer_depth),
           std::ranges::subrange{_encoded_state.end(), _encoded_state.end()}};
-        return std::next(result_it, std::distance(_in_buffer.begin(), buff_it));
+        return std::next(result_it, std::distance(tail_slice.begin(), buff_it));
     }
 
     auto& frame_hints = (*it)->_frame_hints;
     auto hint_it = find_val_or_less(frame_hints, base_offset, &hint_t::key);
+    auto hint_ptr = hint_it != frame_hints.end() ? &(*hint_it) : nullptr;
 
     // it points to a frame that might contain the base offset, start a
     // const_frame_iterator from it
     auto candidate = const_frame_iterator{
       std::span{_in_buffer}.first(_size % details::FOR_buffer_depth),
-      std::ranges::subrange{it, _encoded_state.end()}};
-    if (hint_it != frame_hints.end()) {
-        candidate.skip(hint_it->mapped_values);
-    }
+      std::ranges::subrange{it, _encoded_state.end()},
+      hint_ptr};
     // advance candidate
     for (; candidate->base_offset < base_offset; ++candidate) {
     }
@@ -418,7 +435,16 @@ auto cstore_v2::get_committed_offset() const noexcept -> model::offset {
 template<typename Rng>
 cstore_v2::const_frame_iterator::const_frame_iterator(
   std::span<const segment_meta> trailing_buf, Rng&& encoded_frames_range)
-  : _state(trailing_buf, std::forward<Rng>(encoded_frames_range)) {}
+  : _state(ss::make_lw_shared<state>(
+    trailing_buf, std::forward<Rng>(encoded_frames_range))) {}
+
+template<typename Rng>
+cstore_v2::const_frame_iterator::const_frame_iterator(
+  std::span<const segment_meta> trailing_buf,
+  Rng&& encoded_frames_range,
+  hint_t const* maybe_hint)
+  : _state(ss::make_lw_shared<state>(
+    trailing_buf, std::forward<Rng>(encoded_frames_range), maybe_hint)) {}
 
 auto cstore_v2::const_frame_iterator::operator*() const noexcept
   -> segment_meta const& {
@@ -441,18 +467,32 @@ auto cstore_v2::const_frame_iterator::operator++() noexcept
 }
 
 cstore_v2::const_frame_iterator::state::state(
-  std::span<const segment_meta> trailing_buf, auto&& encoded_frames_range)
+  std::span<const segment_meta> trailing_buf,
+  auto&& encoded_frames_range,
+  hint_t const* maybe_hint)
   : _trailing_sz(trailing_buf.size())
   , _frames_to_read(
       std::ranges::begin(encoded_frames_range),
-      std::ranges::end(encoded_frames_range)) {}
+      std::ranges::end(encoded_frames_range)) {
+    vassert(
+      trailing_buf.size() < _trailing_sm.max_size(),
+      "trailing_buf {} is too big (max: {})",
+      trailing_buf.size(),
+      _trailing_sm.max_size());
+    std::ranges::copy(trailing_buf, _trailing_sm.begin());
+    // prime the pump, this advance should be safe even in the various edge
+    // cases
+    advance(maybe_hint);
+}
 
 cstore_v2::const_frame_iterator::state::state(cstore_v2 const& cs)
-  : _trailing_sz{uint8_t(cs.size() % details::FOR_buffer_depth)}
-  , _trailing_sm{cs._in_buffer}
-  , _frames_to_read(cs._encoded_state.begin(), cs._encoded_state.end()) {}
+  : state(
+    std::span(cs._in_buffer).first(cs.size() % details::FOR_buffer_depth),
+    cs._encoded_state) {}
 
 void cstore_v2::const_frame_iterator::state::check_valid() const {
+    // this check works out also when we call the first advance in the
+    // constructor to prime the pump
     vassert(
       (_head_ptr < _uncompressed_head.size() && _trailing_ptr == 0)
         || (_head_ptr == _uncompressed_head.size() && _trailing_ptr < _trailing_sz),
@@ -523,7 +563,8 @@ auto cstore_v2::const_frame_iterator::state::is_last_one() const noexcept
     return false;
 }
 
-void cstore_v2::const_frame_iterator::state::advance() noexcept {
+void cstore_v2::const_frame_iterator::state::advance(
+  hint_t const* hints) noexcept {
     check_valid();
 
     _head_ptr = std::min<uint8_t>(_head_ptr + 1, _uncompressed_head.size());
@@ -546,10 +587,15 @@ void cstore_v2::const_frame_iterator::state::advance() noexcept {
             _active_frame = _frames_to_read.front()->get_r_state();
             _frames_to_read.erase(_frames_to_read.begin());
             // ensure _active_frame has data to uncompress
+            if ((unlikely(hints != nullptr))) {
+                // this is taken only for one type of constructor
+                _active_frame.skip(*hints);
+            }
         }
         // uncompress data
         // set back _head_ptr to the start of the buffer
         _head_ptr = 0;
+        _active_frame.uncompress(_uncompressed_head);
     }
 }
 
