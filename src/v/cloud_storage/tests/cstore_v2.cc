@@ -51,7 +51,7 @@ struct cstore_v2
 
     struct hint_t {
         model::offset key;
-        std::array<size_t, sm_num_fields> mapped_value;
+        std::array<deltafor_stream_pos_t<int64_t>, sm_num_fields> mapped_value;
     };
 
 private:
@@ -128,7 +128,9 @@ private:
         // create a r_state for this w_state. modifications to this could
         // reflect on w_state, that's why the resulting r_state has a back-link
         // to this, to implement copy-on-write
-        auto get_r_state() const -> r_state;
+        // optionally, if hint_p is not nullptr, apply the hint to the r_state
+        // to skip ahead
+        auto get_r_state(hint_t const* hint_p = nullptr) const -> r_state;
     };
 
     // invariant: if _size is > details::FOR_buffer_depth, _encoded_state is not
@@ -485,11 +487,6 @@ cstore_v2::const_frame_iterator::state::state(
     advance(maybe_hint);
 }
 
-cstore_v2::const_frame_iterator::state::state(cstore_v2 const& cs)
-  : state(
-    std::span(cs._in_buffer).first(cs.size() % details::FOR_buffer_depth),
-    cs._encoded_state) {}
-
 void cstore_v2::const_frame_iterator::state::check_valid() const {
     // this check works out also when we call the first advance in the
     // constructor to prime the pump
@@ -564,7 +561,7 @@ auto cstore_v2::const_frame_iterator::state::is_last_one() const noexcept
 }
 
 void cstore_v2::const_frame_iterator::state::advance(
-  hint_t const* hints) noexcept {
+  hint_t const* hint_p) noexcept {
     check_valid();
 
     _head_ptr = std::min<uint8_t>(_head_ptr + 1, _uncompressed_head.size());
@@ -584,13 +581,9 @@ void cstore_v2::const_frame_iterator::state::advance(
                 ++_trailing_ptr;
                 return;
             }
-            _active_frame = _frames_to_read.front()->get_r_state();
+            _active_frame = _frames_to_read.front()->get_r_state(hint_p);
             _frames_to_read.erase(_frames_to_read.begin());
             // ensure _active_frame has data to uncompress
-            if ((unlikely(hints != nullptr))) {
-                // this is taken only for one type of constructor
-                _active_frame.skip(*hints);
-            }
         }
         // uncompress data
         // set back _head_ptr to the start of the buffer
@@ -653,8 +646,8 @@ void cstore_v2::r_state::uncompress(
     }
 }
 
-auto cstore_v2::w_state::get_r_state() const -> r_state {
-    return {
+auto cstore_v2::w_state::get_r_state(hint_t const* hint_p) const -> r_state {
+    auto res = r_state{
       ._parent = shared_from_this(),
       ._frame_fields = [&]<size_t... Is>(std::index_sequence<Is...>) {
           return decoder_tuple_t{decoder_t<Is>{
@@ -663,6 +656,31 @@ auto cstore_v2::w_state::get_r_state() const -> r_state {
             std::get<Is>(_frame_fields).share(),
             delta_alg_t<Is>{}}...};
       }(std::make_index_sequence<std::tuple_size_v<encoder_tuple_t>>())};
+
+    if (hint_p != nullptr) {
+        {
+            auto frame_base_offset = std::get<sm_base_offset_position>(
+                                       _frame_fields)
+                                       .get_initial_value();
+            auto frame_committed_offset
+              = std::get<sm_committed_offset_position>(_frame_fields)
+                  .get_last_value();
+            vassert(
+              hint_p->key >= frame_base_offset
+                && hint_p->key <= frame_committed_offset,
+              "hint base offset {} is outside of the range of this frame: [{} "
+              "- {}]",
+              hint_p->key(),
+              frame_base_offset,
+              frame_committed_offset);
+        }
+        // if we have a hint, apply it to each frame field
+        auto& values = hint_p->mapped_value;
+        [&]<size_t... Is>(std::index_sequence<Is...>) {
+            (std::get<Is>(res._frame_fields).skip(values[Is]), ...);
+        }(std::make_index_sequence<std::tuple_size_v<encoder_tuple_t>>());
+    }
+    return res;
 };
 } // namespace cloud_storage
 

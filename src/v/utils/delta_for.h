@@ -685,14 +685,14 @@ public:
     // method to reconstruct a copy of the state of this deltafor_decoder,
     // having access to the original iobuf
     struct pos {
-        uint32_t initial;
+        TVal initial;
         uint32_t num_rows;
-        size_t remaining_to_read;
-        auto to_stream_pos_t(size_t parent_original_size) const noexcept
+        uint32_t remaining_to_read;
+        auto to_stream_pos_t(uint32_t parent_original_size) const noexcept
           -> deltafor_stream_pos_t<TVal> {
             return {
-              .offset = parent_original_size - remaining_to_read,
               .initial = initial,
+              .offset = parent_original_size - remaining_to_read,
               .num_rows = num_rows,
             };
         }
@@ -702,7 +702,8 @@ public:
         return {
           .initial = _initial,
           .num_rows = _pos,
-          .remaining_to_read = _delta_reader.remaining_bytes(),
+          .remaining_to_read = static_cast<uint32_t>(
+            _delta_reader.bytes_left()),
         };
     }
 
