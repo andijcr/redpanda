@@ -8,6 +8,33 @@
 #include <boost/test/unit_test.hpp>
 
 #include <ranges>
+
+namespace {
+
+template<
+  size_t Sz,
+  std::invocable<std::integral_constant<std::size_t, 0>> Callable>
+void tuple_for(
+  Callable&& functor, std::integral_constant<std::size_t, Sz> Size = {})
+requires std::is_void_v<
+  std::invoke_result_t<Callable, std::integral_constant<std::size_t, 0>>>
+{
+    [&]<auto... Is>(std::index_sequence<Is...>) {
+        (std::invoke(functor, std::integral_constant<std::size_t, Is>{}), ...);
+    }(std::make_index_sequence<Size>());
+}
+
+template<
+  size_t Sz,
+  std::invocable<std::integral_constant<std::size_t, 0>> Callable>
+auto tuple_for(
+  Callable&& functor, std::integral_constant<std::size_t, Sz> Size = {}) {
+    return [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+        return std::tuple{
+          std::invoke(functor, std::integral_constant<std::size_t, Is>{})...};
+    }(std::make_index_sequence<Size>());
+}
+} // namespace
 namespace cloud_storage {
 
 struct cstore_v2
@@ -17,6 +44,7 @@ struct cstore_v2
 
     // number of fields in a segment meta
     constexpr static auto sm_num_fields = reflection::arity<segment_meta>();
+    using sm_num_fields_t = std::integral_constant<std::size_t, sm_num_fields>;
     // which field is the base_offset. this gets a special treatment as it's the
     // key for this map
     constexpr static auto sm_base_offset_position = 2u;
@@ -36,18 +64,16 @@ struct cstore_v2
     using decoder_t = deltafor_decoder<int64_t, delta_alg_t<idx>>;
 
     // tuple-type with a deltafor_encoder for each field in a segment_meta.
-    using encoder_tuple_t = decltype([]<size_t... Is>(
-                                       std::index_sequence<Is...>) {
-        return std::tuple{encoder_t<Is>{}...};
-    }(std::make_index_sequence<sm_num_fields>()));
+    using encoder_tuple_t = decltype(tuple_for<sm_num_fields>(
+      [](auto ix) { return encoder_t<ix>{}; }));
+
     using encoder_in_buffer = std::array<int64_t, details::FOR_buffer_depth>;
     // for each key (the base offset of segment_meta), store the position of
     // each field in the corresponding deltafor_buffer
 
-    using decoder_tuple_t = decltype([]<size_t... Is>(
-                                       std::index_sequence<Is...>) {
-        return std::tuple{decoder_t<Is>{}...};
-    }(std::make_index_sequence<sm_num_fields>()));
+    // tuple-type with a deltafor_decoder for each field in a segment_meta.
+    using decoder_tuple_t = decltype(tuple_for<sm_num_fields>(
+      [](auto ix) { return decoder_t<ix>{}; }));
 
     struct hint_t {
         model::offset key;
@@ -92,12 +118,20 @@ private:
         // segment_meta saved in this frame
         encoder_tuple_t _frame_fields{};
 
-        // disable copy and move since get_w_state generates back-links to this
-        // object
-        w_state(w_state const&) = delete;
-        w_state& operator=(w_state const&) = delete;
-        w_state(w_state&&) = delete;
-        w_state& operator=(w_state&&) = delete;
+        w_state() = default;
+        // disable public copy and move since get_w_state generates back-links
+        // to this object. use clone() and get_r_state() instead
+    private:
+        w_state(w_state const& lhs)
+          : _frame_hints{lhs._frame_hints} {
+            // TODO
+        }
+        w_state& operator=(w_state const&) = default;
+        w_state(w_state&&) = default;
+        w_state& operator=(w_state&&) = default;
+
+    public:
+        ~w_state() = default;
 
         // used to implement copy-on-write: const_iterator grab a shared_ptr, if
         // some destructive operation (truncate, rewrite, append) has to happen
@@ -131,6 +165,14 @@ private:
         // optionally, if hint_p is not nullptr, apply the hint to the r_state
         // to skip ahead
         auto get_r_state(hint_t const* hint_p = nullptr) const -> r_state;
+
+        // create a clone of this w_state, such that non const op on the
+        // returned object do not affect this
+        auto clone() const -> w_state {
+            auto res = w_state{};
+
+            return res;
+        }
     };
 
     // invariant: if _size is > details::FOR_buffer_depth, _encoded_state is not
@@ -147,6 +189,15 @@ private:
     // N*details::FOR_buffer_depth elements
 
     std::size_t _size{0};
+
+    constexpr auto in_buffer_size() const noexcept -> std::size_t {
+        return size() % details::FOR_buffer_depth;
+    }
+
+    constexpr auto in_buffer_view() const noexcept
+      -> std::span<const segment_meta> {
+        return std::span{_in_buffer}.first(in_buffer_size());
+    }
 
 public:
     // returns base and committed offset covered by this span, as the base
@@ -289,10 +340,7 @@ public:
 
     auto begin() -> const_frame_iterator {
         return empty() ? end()
-                       : const_frame_iterator{
-                         std::span{_in_buffer}.first(
-                           size() % details::FOR_buffer_depth),
-                         _encoded_state};
+                       : const_frame_iterator{in_buffer_view(), _encoded_state};
     }
     auto end() -> const_frame_iterator { return {}; }
     void swap(cstore_v2& rhs) noexcept;
@@ -304,10 +352,42 @@ public:
     // providing these offers some other possibilities
     cstore_v2(const_iterator const&, const_iterator const&);
 
-    // search methods
+    /// search methods
 
     // search by base offset
     auto find(model::offset) const noexcept -> const_frame_iterator;
+
+    // data insertion operation
+
+    void append(segment_meta const& sm) {
+        vassert(
+          get_committed_offset() < sm.base_offset,
+          "append supports only tail insertion. current committed_offset {}, "
+          "append candidate:{}",
+          get_committed_offset(),
+          sm);
+
+        if (in_buffer_size() < (_in_buffer.size() - 1)) {
+            // there is space in the _in_buffer. just insert it there, since
+            // there is no other observer of this data
+            _in_buffer[in_buffer_size()] = sm;
+            ++_size;
+            return;
+        }
+
+        // there is enough data in the buffer + sm to insert a new batch in the
+        // encoded state.
+        if (unlikely(_encoded_state.empty())) {
+            // ensure a least one
+            _encoded_state.push_back(ss::make_lw_shared<w_state>());
+        }
+
+        if (unlikely(!_encoded_state.back().owned())) {
+            // CoW, clone the last one since there is something holding onto it
+            // and we are going to modify it
+            _encoded_state.back()
+        }
+    }
 };
 
 /// it's like lower bound in the mathematical sense:
@@ -350,8 +430,7 @@ auto cstore_v2::find(model::offset base_offset) const noexcept
       _encoded_state, base_offset, &w_state::get_base_offset);
     if (it == _encoded_state.end()) {
         // base offset could be in the in_buffer still
-        auto tail_slice
-          = std::span(_in_buffer).first(_size % details::FOR_buffer_depth);
+        auto tail_slice = in_buffer_view();
         auto buff_it = std::ranges::find(
           tail_slice, base_offset, &segment_meta::base_offset);
         if (buff_it == tail_slice.end()) {
@@ -359,7 +438,7 @@ auto cstore_v2::find(model::offset base_offset) const noexcept
         }
 
         auto result_it = const_frame_iterator{
-          std::span{_in_buffer}.first(_size % details::FOR_buffer_depth),
+          tail_slice,
           std::ranges::subrange{_encoded_state.end(), _encoded_state.end()}};
         return std::next(result_it, std::distance(tail_slice.begin(), buff_it));
     }
@@ -371,7 +450,7 @@ auto cstore_v2::find(model::offset base_offset) const noexcept
     // it points to a frame that might contain the base offset, start a
     // const_frame_iterator from it
     auto candidate = const_frame_iterator{
-      std::span{_in_buffer}.first(_size % details::FOR_buffer_depth),
+      in_buffer_view(),
       std::ranges::subrange{it, _encoded_state.end()},
       hint_ptr};
     // advance candidate
@@ -389,24 +468,24 @@ void cstore_v2::swap(cstore_v2& rhs) noexcept {
     if (this == &rhs) {
         return;
     }
-    auto us = std::tie(_encoded_state, _in_buffer, _size);
-    auto them = std::tie(rhs._encoded_state, rhs._in_buffer, rhs._size);
+    auto us_in = in_buffer_view();
+    auto them_in = rhs.in_buffer_view();
+    auto us = std::tie(_encoded_state, us_in, _size);
+    auto them = std::tie(rhs._encoded_state, them_in, rhs._size);
     std::swap(us, them);
 }
 
 bool cstore_v2::operator==(cstore_v2 const& rhs) const noexcept {
     // exclude hints, as they are just a lookup optimization. compare
     // fields in order of simplicity
-    constexpr static auto to_reference = [](auto& ptr) -> decltype(auto) {
-        return *ptr;
-    };
-    return std::tie(_size, _in_buffer) == std::tie(rhs._size, rhs._in_buffer)
+    constexpr static auto dereference_encoded_state =
+      [](auto& ptr) -> decltype(auto) { return *ptr; };
+    return size() == rhs.size()
+           && std::ranges::equal(in_buffer_view(), rhs.in_buffer_view())
            && std::ranges::equal(
-             _encoded_state,
-             rhs._encoded_state,
-             std::equal_to<>{},
-             to_reference,
-             to_reference);
+             _encoded_state | std::views::transform(dereference_encoded_state),
+             rhs._encoded_state
+               | std::views::transform(dereference_encoded_state));
 }
 
 auto cstore_v2::get_base_offset() const noexcept -> model::offset {
@@ -606,16 +685,16 @@ auto cstore_v2::r_state::clone() const -> r_state {
     // get a pristine r_state
     auto res = _parent->get_r_state();
     // fix up the _frame_fields by skipping ahead
-    [&]<size_t... Is>(std::index_sequence<Is...>) {
-        // get a copy of all the skip info
-        auto pos_tuple = std::tuple{
-          std::get<Is>(_frame_fields)
-            .get_pos()
-            .to_stream_pos_t(
-              std::get<Is>(_parent->_frame_fields).get_position().offset)...};
+    tuple_for<sm_num_fields>([&](auto ix) {
+        // get a copy of the skip info
+        auto original_pos
+          = std::get<ix>(_frame_fields)
+              .get_pos()
+              .to_stream_pos_t(
+                std::get<ix>(_parent->_frame_fields).get_position().offset);
         // apply them
-        (std::get<Is>(res._frame_fields).skip(std::get<Is>(pos_tuple)), ...);
-    }(std::make_index_sequence<std::tuple_size_v<decoder_tuple_t>>());
+        std::get<ix>(res._frame_fields).skip(original_pos);
+    });
 
     return res;
 }
@@ -623,21 +702,16 @@ auto cstore_v2::r_state::clone() const -> r_state {
 void cstore_v2::r_state::uncompress(
   std::span<segment_meta, details::FOR_buffer_depth> out) {
     std::array<int64_t, details::FOR_buffer_depth> buffer;
-    [&]<size_t... Is>(std::index_sequence<Is...>) {
-        // uncompress each column into a intermediate buffer, save it
-        // in out array
-        (
-          [&] {
-              std::get<Is>(_frame_fields).read(buffer);
+    // uncompress each column into a intermediate buffer, save it
+    // in out array
+    tuple_for<sm_num_fields>([&](auto ix) {
+        std::get<ix>(_frame_fields).read(buffer);
 
-              for (auto i = 0u; i < buffer.size(); i++) {
-                  auto& field_is = std::get<Is>(reflection::to_tuple(out[i]));
-                  field_is = static_cast<std::decay_t<decltype(field_is)>>(
-                    buffer[i]);
-              }
-          }(),
-          ...);
-    }(std::make_index_sequence<std::tuple_size_v<decoder_tuple_t>>());
+        for (auto i = 0u; i < buffer.size(); i++) {
+            auto& field_is = std::get<ix>(reflection::to_tuple(out[i]));
+            field_is = static_cast<std::decay_t<decltype(field_is)>>(buffer[i]);
+        }
+    });
 
     if (empty()) {
         // micro optimization: releases parent so that it can be free
@@ -649,13 +723,14 @@ void cstore_v2::r_state::uncompress(
 auto cstore_v2::w_state::get_r_state(hint_t const* hint_p) const -> r_state {
     auto res = r_state{
       ._parent = shared_from_this(),
-      ._frame_fields = [&]<size_t... Is>(std::index_sequence<Is...>) {
-          return decoder_tuple_t{decoder_t<Is>{
-            std::get<Is>(_frame_fields).get_initial_value(),
-            std::get<Is>(_frame_fields).get_row_count(),
-            std::get<Is>(_frame_fields).share(),
-            delta_alg_t<Is>{}}...};
-      }(std::make_index_sequence<std::tuple_size_v<encoder_tuple_t>>())};
+      ._frame_fields = tuple_for<sm_num_fields>([&](auto ix) {
+          return decoder_t<ix>{
+            std::get<ix>(_frame_fields).get_initial_value(),
+            std::get<ix>(_frame_fields).get_row_count(),
+            std::get<ix>(_frame_fields).share(),
+            delta_alg_t<ix>{}};
+      }),
+    };
 
     if (hint_p != nullptr) {
         {
@@ -675,10 +750,10 @@ auto cstore_v2::w_state::get_r_state(hint_t const* hint_p) const -> r_state {
               frame_committed_offset);
         }
         // if we have a hint, apply it to each frame field
-        auto& values = hint_p->mapped_value;
-        [&]<size_t... Is>(std::index_sequence<Is...>) {
-            (std::get<Is>(res._frame_fields).skip(values[Is]), ...);
-        }(std::make_index_sequence<std::tuple_size_v<encoder_tuple_t>>());
+        tuple_for<sm_num_fields>(
+          [&values = hint_p->mapped_value, &res](auto ix) {
+              std::get<ix>(res._frame_fields).skip(values[ix]);
+          });
     }
     return res;
 };
