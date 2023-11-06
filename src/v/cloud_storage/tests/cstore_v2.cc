@@ -14,24 +14,19 @@ namespace {
 template<
   size_t Sz,
   std::invocable<std::integral_constant<std::size_t, 0>> Callable>
-void tuple_for(
-  Callable&& functor, std::integral_constant<std::size_t, Sz> Size = {})
-requires std::is_void_v<
-  std::invoke_result_t<Callable, std::integral_constant<std::size_t, 0>>>
-{
-    [&]<auto... Is>(std::index_sequence<Is...>) {
-        (std::invoke(functor, std::integral_constant<std::size_t, Is>{}), ...);
-    }(std::make_index_sequence<Size>());
-}
-
-template<
-  size_t Sz,
-  std::invocable<std::integral_constant<std::size_t, 0>> Callable>
 auto tuple_for(
   Callable&& functor, std::integral_constant<std::size_t, Sz> Size = {}) {
-    return [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-        return std::tuple{
-          std::invoke(functor, std::integral_constant<std::size_t, Is>{})...};
+    constexpr static auto functor_is_void = std::is_void_v<
+      std::invoke_result_t<Callable, std::integral_constant<std::size_t, 0>>>;
+    return [&]<auto... Is>(std::index_sequence<Is...>) {
+        if constexpr (functor_is_void) {
+            return (
+              std::invoke(functor, std::integral_constant<std::size_t, Is>{}),
+              ...);
+        } else {
+            return std::tuple{std::invoke(
+              functor, std::integral_constant<std::size_t, Is>{})...};
+        }
     }(std::make_index_sequence<Size>());
 }
 } // namespace
@@ -122,13 +117,27 @@ private:
         // disable public copy and move since get_w_state generates back-links
         // to this object. use clone() and get_r_state() instead
     private:
+        struct lw_copy_t{};
         w_state(w_state const& lhs)
-          : _frame_hints{lhs._frame_hints} {
-            // TODO
-        }
-        w_state& operator=(w_state const&) = default;
+          : _frame_hints{lhs._frame_hints}
+          , _frame_fields{tuple_for<sm_num_fields>([&](auto ix) {
+              auto& lhs_enc = std::get<ix>(lhs._frame_fields);
+              return encoder_t<ix>{
+                lhs_enc.get_initial_value(),
+                lhs_enc.get_row_count(),
+                lhs_enc.get_last_value(),
+                lhs_enc.copy()};
+          })} {}
+        w_state& operator=(w_state const& oth) {
+            if (this != &oth) {
+                auto cpy = oth;
+                *this = std::move(cpy);
+            }
+            return *this;
+        };
         w_state(w_state&&) = default;
         w_state& operator=(w_state&&) = default;
+        w_state(w_state &lhs, lw_copy_t): _frame_hints{lhs._frame_hints}, _frame_fields{tuple_for<sm_num_fields>([&](auto ix){return encoder_t<ix>(&std::get<ix>(lhs._frame_fields));})} {}
 
     public:
         ~w_state() = default;

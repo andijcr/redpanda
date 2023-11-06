@@ -692,3 +692,29 @@ SEASTAR_THREAD_TEST_CASE(iobuf_parser_consume_to) {
 
     BOOST_REQUIRE(stream.bytes_left() == 0);
 }
+
+SEASTAR_THREAD_TEST_CASE(share_and_append) {
+    auto frag_gen = [](std::span<const uint8_t> in) {
+        auto tmp = iobuf{};
+        tmp.append(in.data(), in.size());
+        return tmp;
+    };
+    auto reference_data = std::vector<uint8_t>{
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
+
+    // create an interesting iobuf composed of more than one fragment
+    auto src = iobuf{};
+    src.append_fragments(frag_gen(std::span{reference_data}.first(5)));
+
+    src.append_fragments(frag_gen(std::span{reference_data}.subspan(5, 5)));
+    src.append_fragments(frag_gen(std::span{reference_data}.last(5)));
+
+    auto snapshot = src.copy();
+    auto snapshot_light = src.share(0, src.size_bytes());
+    BOOST_REQUIRE_MESSAGE(snapshot == snapshot_light, "sanity check");
+
+    src.append_fragments(frag_gen(reference_data));
+    BOOST_CHECK_MESSAGE(
+      src != snapshot_light, "appending data shouldn't affect snapshot_light");
+    BOOST_CHECK(snapshot == snapshot_light);
+}
