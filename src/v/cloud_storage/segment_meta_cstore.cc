@@ -10,8 +10,8 @@
 
 #include "cloud_storage/segment_meta_cstore.h"
 
-#include "cloud_storage/types.h"
 #include "cloud_storage/logger.h"
+#include "cloud_storage/types.h"
 #include "config/configuration.h"
 #include "model/fundamental.h"
 #include "model/metadata.h"
@@ -271,8 +271,11 @@ public:
     void append(const segment_meta& meta) {
         auto ix = _base_offset.size();
 
-
-        vlog(cst_log.info, "column_store::append(base={}, last={})", meta.base_offset(), meta.committed_offset());
+        vlog(
+          cst_log.info,
+          "column_store::append(base={}, last={})",
+          meta.base_offset(),
+          meta.committed_offset());
 
         try {
             details::tuple_map(
@@ -347,12 +350,18 @@ public:
                 // replacements either start before or exactly at 0
                 return size_t{0};
             }
-            auto candidate = _base_offset.find(offset_seg_it->first());
+            auto candidate = _base_offset.lower_bound(offset_seg_it->first());
             if (candidate.is_end()) {
                 // replacements are append only, return an index that will
                 // signal this
                 return std::numeric_limits<size_t>::max();
             }
+            vlog(
+              cst_log.info,
+              "first_replacement_candidate: {:0>4}- {}",
+              candidate.index(),
+              *candidate);
+
             // replacements are in the middle of current store
             return candidate.index();
         }();
@@ -402,12 +411,16 @@ public:
           last_hint_tosave,
           _hints.end()};
 
-        auto unchanged_committed_offset
-          = replacement_store.last_committed_offset().value_or(
-            model::offset::min());
+        auto unchanged_base_offset
+          = replacement_store.last_base_offset().value_or(model::offset::min());
 
+        vlog(
+          cst_log.info,
+          "last base offset from prev store: {}, unchanged size: {}",
+          unchanged_base_offset,
+          replacement_store.size());
         // iterator pointing to first segment not cloned into replacement_store
-        auto old_segments_it = upper_bound(unchanged_committed_offset());
+        auto old_segments_it = upper_bound(unchanged_base_offset());
         auto old_segments_end = end();
 
         // merge replacements and old segments into new store
@@ -419,7 +432,7 @@ public:
             auto old_seg = dereference(old_segments_it);
             // append old segments with committed offset smaller than
             // replacement
-            while (old_seg.committed_offset < replacement_base_offset) {
+            while (old_seg.base_offset < replacement_base_offset) {
                 replacement_store.append(old_seg);
                 details::increment_all(old_segments_it);
                 if (old_segments_it == old_segments_end) {
@@ -523,6 +536,13 @@ public:
             return std::nullopt;
         }
         return model::offset(*_committed_offset.last_value());
+    }
+
+    auto last_base_offset() const -> std::optional<model::offset> {
+        if (empty()) {
+            return std::nullopt;
+        }
+        return model::offset(*_base_offset.last_value());
     }
 
     /// Return iterator to the end of the sequence
@@ -1008,6 +1028,10 @@ public:
     }
 
     void insert(const segment_meta& m) {
+        auto buf = absl::btree_map<model::offset, segment_meta>{
+          {m.base_offset, m}};
+        _col.insert_entries(buf.begin(), buf.end());
+        return;
         auto [m_it, _] = _write_buffer.insert_or_assign(m.base_offset, m);
         // the new segment_meta could be a replacement for subsequent entries in
         // the buffer, so do a pass to clean them

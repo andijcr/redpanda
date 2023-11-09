@@ -948,30 +948,30 @@ BOOST_AUTO_TEST_CASE(test_segment_meta_cstore_always_flush) {
     // only base/committed offset are interesting for this test
     std::vector<segment_meta> metas;
 
-    auto make_seg = [](auto base){
+    auto make_seg = [](auto base) {
         return segment_meta{
           .is_compacted = false,
-          .size_bytes = 812,
+          .size_bytes = 0,
           .base_offset = model::offset(base),
           .committed_offset = model::offset(base + 9),
-          .base_timestamp = model::timestamp(1646430092103),
-          .max_timestamp = model::timestamp(1646430092103),
+          .base_timestamp = model::timestamp(0),
+          .max_timestamp = model::timestamp(0),
           .delta_offset = model::offset_delta(0),
-          .archiver_term = model::term_id(2),
+          .archiver_term = model::term_id(0),
           .segment_term = model::term_id(0),
           .delta_offset_end = model::offset_delta(0),
-          .sname_format = segment_name_format::v3,
+          .sname_format = segment_name_format(0),
           .metadata_size_hint = 0,
         };
     };
 
     segment_meta_cstore store{};
 
-    auto seg1 = make_seg(10);
-    auto seg2 = make_seg(3);
+    auto seg2 = make_seg(10);
+    auto seg1 = make_seg(3);
 
-    metas.push_back(seg2);
     metas.push_back(seg1);
+    metas.push_back(seg2);
 
     /*
      * Normally, the segment meta store should be able to handle
@@ -980,46 +980,23 @@ BOOST_AUTO_TEST_CASE(test_segment_meta_cstore_always_flush) {
      * However, if we flush after every write we can effectively
      * skip all the logic in `column_store::insert_entries` and force
      * entries in the _head of the `column_store_frame`. When the frame fills
-     * up (after 16 entries -- like below), it will "flush" itself to the encoder.
+     * up (after 16 entries -- like below), it will "flush" itself to the
+     * encoder.
      *
      * The encoder for the `base_offset` column will receive out of order
      * data which it cannot handle and assert out.
      */
 
-    store.insert(seg1);
-    store.flush_write_buffer();
-    store.insert(seg2);
-    store.flush_write_buffer();
-    store.insert(seg1);
-    store.flush_write_buffer();
-    store.insert(seg2);
-    store.flush_write_buffer();
-    store.insert(seg1);
-    store.flush_write_buffer();
-    store.insert(seg2);
-    store.flush_write_buffer();
-    store.insert(seg1);
-    store.flush_write_buffer();
-    store.insert(seg2);
-    store.flush_write_buffer();
-    store.insert(seg1);
-    store.flush_write_buffer();
-    store.insert(seg2);
-    store.flush_write_buffer();
-    store.insert(seg1);
-    store.flush_write_buffer();
-    store.insert(seg2);
-    store.flush_write_buffer();
-    store.insert(seg1);
-    store.flush_write_buffer();
-    store.insert(seg2);
-    store.flush_write_buffer();
-    store.insert(seg1);
-    store.flush_write_buffer();
-    store.insert(seg2);
-    store.flush_write_buffer();
+    for (auto i = 0; i < 8; ++i) {
+        vlog(test.info, "[{:>2}]: seg2", i);
+        store.insert(seg2);
+        vlog(test.info, "[{:>2}]: seg1", i);
+        store.insert(seg1);
+        // store.flush_write_buffer();
+        // store.flush_write_buffer();
+    }
 
-    for (const auto& seg: store) {
+    for (const auto& seg : store) {
         auto iter = store.lower_bound(seg.base_offset);
         BOOST_CHECK(iter != store.end());
         BOOST_CHECK(iter->base_offset == seg.base_offset);
@@ -1234,4 +1211,18 @@ BOOST_AUTO_TEST_CASE(test_segment_meta_cstore_append_retrieve_edge_case) {
     auto last_frame_first_offset
       = metadata[cloud_storage::cstore_max_frame_size * 2].base_offset;
     BOOST_CHECK_NO_THROW(store.lower_bound(last_frame_first_offset));
+}
+
+SEASTAR_THREAD_TEST_CASE(move_future) {
+    auto pr = ss::promise<>();
+    auto fut = pr.get_future();
+    pr.set_value();
+    {
+        std::ignore = std::move(fut);
+    }               // this is what's happening in co_await std::move(fut)
+    pr.set_value(); // does not fail, the future does not exists anymore
+    std::ignore
+      = pr.get_future(); // fails with seastar::promise<>::get_future() [T =
+                         // void]: Assertion `!this->_future && this->_state &&
+                         // !this->_task' failed.
 }
