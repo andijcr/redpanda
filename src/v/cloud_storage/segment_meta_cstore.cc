@@ -537,7 +537,10 @@ public:
     template<segment_meta_ix col_index, class col_t>
     auto at_with_hint(
       const col_t& c, uint32_t ix, const std::optional<hint_vec_t>& h) const {
-        vassert(h.has_value(), "Invalid access at index {}", ix);
+        if (unlikely(!h.has_value())) {
+            ss::throw_with_backtrace<std::logic_error>(
+              fmt::format("Invalid access at index {}", ix));
+        }
         return c.at_index(
           ix, std::get<static_cast<size_t>(col_index)>(h.value()));
     }
@@ -1174,7 +1177,10 @@ segment_meta_cstore::at_index(size_t ix) const {
 auto segment_meta_cstore::prev(const_iterator const& it) const
   -> const_iterator {
 #ifndef NDEBUG
-    vassert(it != begin(), "prev called on a begin() iterator");
+    if (unlikely(it == begin())) {
+        ss::throw_with_backtrace<std::logic_error>(
+          "prev called on a begin() iterator");
+    }
 #endif
     return at_index((it.is_end() ? size() : it.index()) - 1);
 }
