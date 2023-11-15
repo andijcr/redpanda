@@ -13,6 +13,8 @@
 #include "cloud_storage/logger.h"
 #include "vlog.h"
 
+#include <fmt/ranges.h>
+
 namespace {
 cloud_storage_clients::default_overrides get_default_overrides() {
     // Set default overrides
@@ -40,25 +42,7 @@ cloud_storage_clients::default_overrides get_default_overrides() {
 namespace cloud_storage {
 
 std::ostream& operator<<(std::ostream& o, const segment_meta& s) {
-    fmt::print(
-      o,
-      "{{is_compacted: {}, size_bytes: {}, base_offset: {}, committed_offset: "
-      "{}, base_timestamp: {}, max_timestamp: {}, delta_offset: {}, "
-      "ntp_revision: {}, archiver_term: {}, segment_term: {}, "
-      "delta_offset_end: {}, sname_format: {}, metadata_size_hint: {}}}",
-      s.is_compacted,
-      s.size_bytes,
-      s.base_offset,
-      s.committed_offset,
-      s.base_timestamp,
-      s.max_timestamp,
-      s.delta_offset,
-      s.ntp_revision,
-      s.archiver_term,
-      s.segment_term,
-      s.delta_offset_end,
-      s.sname_format,
-      s.metadata_size_hint);
+    fmt::print(o, "{:u}", s);
     return o;
 }
 
@@ -447,3 +431,56 @@ configuration::get_bucket_config() {
 }
 
 } // namespace cloud_storage
+
+auto fmt::formatter<cloud_storage::segment_meta>::format(
+  cloud_storage::segment_meta const& s, format_context& ctx) const
+  -> decltype(ctx.out()) {
+    if (presentation == 'u') {
+        return fmt::format_to(
+          ctx.out(),
+          "{{is_compacted: {}, size_bytes: {}, base_offset: {}, "
+          "committed_offset: "
+          "{}, base_timestamp: {}, max_timestamp: {}, delta_offset: {}, "
+          "ntp_revision: {}, archiver_term: {}, segment_term: {}, "
+          "delta_offset_end: {}, sname_format: {}, metadata_size_hint: "
+          "{}}}",
+          s.is_compacted,
+          s.size_bytes,
+          s.base_offset,
+          s.committed_offset,
+          s.base_timestamp,
+          s.max_timestamp,
+          s.delta_offset,
+          s.ntp_revision,
+          s.archiver_term,
+          s.segment_term,
+          s.delta_offset_end,
+          s.sname_format,
+          s.metadata_size_hint);
+    }
+
+    if (presentation == 's') {
+        return fmt::format_to(
+          ctx.out(),
+          "{{o={}-{} t={}-{}}}",
+          s.base_offset,
+          s.committed_offset,
+          s.base_timestamp,
+          s.max_timestamp);
+    }
+
+    // format one line
+    constexpr static auto unwrap = []<typename T>(T const& v) {
+        if constexpr (std::is_same_v<T, model::timestamp>) {
+            return v();
+        } else {
+            return v;
+        }
+    };
+    return fmt::format_to(
+      ctx.out(),
+      "{}",
+      std::apply(
+        [&](auto&... v) { return std::tuple(unwrap(v)...); },
+        reflection::to_tuple(s)));
+}
