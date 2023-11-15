@@ -88,18 +88,31 @@ struct delta_delta {
         auto p = last;
         uint64_t agg = 0;
         for (uint32_t i = 0; i < row_width; ++i) {
-            vassert(
-              row[i] >= p,
-              "Value {} can't be smaller than the previous one {}",
-              row[i],
-              p);
+            if (unlikely(row[i] < p)) {
+                ss::throw_with_backtrace<std::logic_error>(fmt::format(
+                  "Value row[{}]={} can't be smaller than the previous one "
+                  "{}. ",
+                  i,
+                  row[i],
+                  p));
+            }
+#ifndef NDEBUG
+            value_t delta;
+            if (unlikely(__builtin_sub_overflow(row[i], p, &delta))) {
+                ss::throw_with_backtrace<std::logic_error>(fmt::format(
+                  "overflow in op row[{}] - p -> {} {}", i, row[i], p));
+            }
+#else
             auto delta = row[i] - p;
-            vassert(
-              delta >= _step_size,
-              "Delta {} can't be smaller than step size {}",
-              delta,
-              _step_size);
-            buf[i] = (row[i] - p) - _step_size;
+#endif
+            if (unlikely(delta < _step_size)) {
+                ss::throw_with_backtrace<std::logic_error>(fmt::format(
+                  "Delta[{}] {} can't be smaller than step size {}",
+                  i,
+                  delta,
+                  _step_size));
+            }
+            buf[i] = delta - _step_size;
             agg |= buf[i];
             p = row[i];
         }
