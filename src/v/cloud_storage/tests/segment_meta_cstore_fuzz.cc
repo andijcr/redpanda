@@ -424,27 +424,60 @@ using cstore_operation = std::variant<
 // SIN SECTION
 // this is a sections of ODR sins to appease the daemons of the linker
 
-auto cloud_storage::operator<<(std::ostream& os, segment_meta const& s)
-  -> std::ostream& {
-    return os << fmt::format(
-             "{{is_compacted: {}, size_bytes: {}, base_offset: {}, "
-             "committed_offset: "
-             "{}, base_timestamp: {}, max_timestamp: {}, delta_offset: {}, "
-             "ntp_revision: {}, archiver_term: {}, segment_term: {}, "
-             "delta_offset_end: {}, sname_format: {}, metadata_size_hint: {}}}",
-             s.is_compacted,
-             s.size_bytes,
-             s.base_offset,
-             s.committed_offset,
-             s.base_timestamp,
-             s.max_timestamp,
-             s.delta_offset,
-             s.ntp_revision,
-             s.archiver_term,
-             s.segment_term,
-             s.delta_offset_end,
-             s.sname_format,
-             s.metadata_size_hint);
+auto fmt::formatter<cloud_storage::segment_meta>::format(
+  cloud_storage::segment_meta const& s, format_context& ctx) const
+  -> decltype(ctx.out()) {
+    if (presentation == 'u') {
+        return fmt::format_to(
+          ctx.out(),
+          "{{is_compacted: {}, size_bytes: {}, base_offset: {}, "
+          "committed_offset: "
+          "{}, base_timestamp: {}, max_timestamp: {}, delta_offset: {}, "
+          "ntp_revision: {}, archiver_term: {}, segment_term: {}, "
+          "delta_offset_end: {}, sname_format: {}, metadata_size_hint: "
+          "{}}}",
+          s.is_compacted,
+          s.size_bytes,
+          s.base_offset,
+          s.committed_offset,
+          s.base_timestamp,
+          s.max_timestamp,
+          s.delta_offset,
+          s.ntp_revision,
+          s.archiver_term,
+          s.segment_term,
+          s.delta_offset_end,
+          s.sname_format,
+          s.metadata_size_hint);
+    }
+
+    if (presentation == 's') {
+        return fmt::format_to(
+          ctx.out(),
+          "{{o={}-{} t={}-{}}}",
+          s.base_offset,
+          s.committed_offset,
+          s.base_timestamp,
+          s.max_timestamp);
+    }
+    // format one line
+    auto out = ctx.out();
+
+    constexpr static auto unwrap =
+      []<typename T>(T const& v) -> decltype(auto) {
+        if constexpr (std::is_same_v<T, model::timestamp>) {
+            return v();
+        } else {
+            return v;
+        }
+    };
+    std::apply(
+      [&](auto& first, auto&... rest) {
+          out = format_to(out, "{}", first);
+          ((out = format_to(out, ", {}", unwrap(rest))), ...);
+      },
+      reflection::to_tuple(s));
+    return out;
 }
 
 auto cloud_storage::operator<<(std::ostream& os, segment_name_format const& sn)

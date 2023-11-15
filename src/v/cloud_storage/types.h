@@ -415,6 +415,23 @@ std::ostream& operator<<(std::ostream& o, const anomalies& a);
 
 } // namespace cloud_storage
 
+template<>
+struct fmt::formatter<cloud_storage::segment_meta> {
+    char presentation = 'u'; // 'u' for unchanged, 'c' for one line csv, 's' for
+                             // "{{o={}-{} t={}-{}}}",
+    constexpr auto parse(format_parse_context& ctx) {
+        auto it = ctx.begin();
+        auto end = ctx.end();
+        if (it != end && (*it == 'c' || *it == 'u' || *it == 's'))
+            presentation = *it++;
+        if (it != end && *it != '}') throw format_error("invalid format");
+        return it;
+    }
+
+    auto format(cloud_storage::segment_meta const& s, format_context& ctx) const
+      -> decltype(ctx.out());
+};
+
 namespace std {
 template<>
 struct is_error_code_enum<cloud_storage::error_outcome> : true_type {};
