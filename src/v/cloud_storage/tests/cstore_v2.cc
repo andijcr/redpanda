@@ -29,6 +29,7 @@ auto tuple_for(
         }
     }(std::make_index_sequence<Size>());
 }
+
 } // namespace
 namespace cloud_storage {
 
@@ -75,6 +76,26 @@ struct cstore_v2
         std::array<deltafor_stream_pos_t<int64_t>, sm_num_fields> mapped_value;
     };
 
+    struct segment_range {
+        model::offset base_offset;
+        model::offset committed_offset;
+        segment_range() noexcept = default;
+        segment_range(model::offset base, model::offset committed) noexcept: base_offset{base}, committed_offset{committed} {}
+        explicit segment_range(segment_meta const& sm) noexcept: base_offset{sm.base_offset}, committed_offset{sm.committed_offset} {}
+        
+        constexpr auto is_replaced_by(segment_range const& sr) const {
+            // sm starts early and ends later than this
+            return sr.base_offset <= base_offset
+                   && sr.committed_offset >= committed_offset;
+        }
+        constexpr auto
+        is_replaced_by(cloud_storage::segment_meta const& sm) const {
+            // sm starts early and ends later than this
+            return sm.base_offset <= base_offset
+                   && sm.committed_offset >= committed_offset;
+        }
+    };
+
 private:
     // NOTEANDREA move the state to a ss::lw_shared_ptr managed struct, to
     // create a copy-on-write structure
@@ -117,7 +138,7 @@ private:
         // disable public copy and move since get_w_state generates back-links
         // to this object. use clone() and get_r_state() instead
     private:
-        struct lw_copy_t{};
+        struct lw_copy_t {};
         w_state(w_state const& lhs)
           : _frame_hints{lhs._frame_hints}
           , _frame_fields{tuple_for<sm_num_fields>([&](auto ix) {
@@ -137,7 +158,11 @@ private:
         };
         w_state(w_state&&) = default;
         w_state& operator=(w_state&&) = default;
-        w_state(w_state &lhs, lw_copy_t): _frame_hints{lhs._frame_hints}, _frame_fields{tuple_for<sm_num_fields>([&](auto ix){return encoder_t<ix>(&std::get<ix>(lhs._frame_fields));})} {}
+        w_state(w_state& lhs, lw_copy_t)
+          : _frame_hints{lhs._frame_hints}
+          , _frame_fields{tuple_for<sm_num_fields>([&](auto ix) {
+              return encoder_t<ix>(&std::get<ix>(lhs._frame_fields));
+          })} {}
 
     public:
         ~w_state() = default;
@@ -168,6 +193,16 @@ private:
                 .get_last_value());
         }
 
+        auto get_last_range() const noexcept -> segment_range {
+            // precondition: this is not empty;
+            return segment_range{
+              model::offset(std::get<sm_base_offset_position>(_frame_fields)
+                              .get_last_value()),
+              model::offset(
+                std::get<sm_committed_offset_position>(_frame_fields)
+                  .get_last_value())};
+        }
+
         // create a r_state for this w_state. modifications to this could
         // reflect on w_state, that's why the resulting r_state has a back-link
         // to this, to implement copy-on-write
@@ -175,7 +210,7 @@ private:
         // to skip ahead
         auto get_r_state(hint_t const* hint_p = nullptr) const -> r_state;
 
-        // create a clone of this w_state, such that non const op on the
+        // create a clone of this w_state, such that non-const op on the
         // returned object do not affect this
         auto clone() const -> w_state {
             auto res = w_state{};
@@ -208,12 +243,29 @@ private:
         return std::span{_in_buffer}.first(in_buffer_size());
     }
 
-public:
     // returns base and committed offset covered by this span, as the base
     // offset of first element and commit offset of the last one
     auto get_base_offset() const noexcept -> model::offset;
     auto get_committed_offset() const noexcept -> model::offset;
 
+public:
+    auto get_range() const noexcept -> segment_range {
+        return {get_base_offset(), get_committed_offset()};
+    }
+
+    auto get_last_segment_range() const noexcept -> segment_range {
+        if (empty()) {
+            return {};
+        }
+
+        if (size() < _in_buffer.max_size()) {
+            // still in the buffer
+            auto& last = _in_buffer[size() - 1];
+            return {last.base_offset, last.committed_offset};
+        }
+
+        return _encoded_state.back()->get_last_range();
+    }
     // this is a proxy iterator because references returned by this will not be
     // valid once the iterator is advanced
     struct const_frame_iterator final
@@ -367,15 +419,18 @@ public:
     auto find(model::offset) const noexcept -> const_frame_iterator;
 
     // data insertion operation
-
+private:
+    // private code path for appending segments to a tmp cstore while merging stuff. 
     void append(segment_meta const& sm) {
+        {
+        auto last_sr=get_last_segment_range();
         vassert(
-          get_committed_offset() < sm.base_offset,
-          "append supports only tail insertion. current committed_offset {}, "
-          "append candidate:{}",
-          get_committed_offset(),
+          last_sr.base_offset < sm.base_offset && ,
+          "append supports only tail insertion. current last_segment_range: {}, "
+          "append candidate: {}",
+          last_sr,
           sm);
-
+        }
         if (in_buffer_size() < (_in_buffer.size() - 1)) {
             // there is space in the _in_buffer. just insert it there, since
             // there is no other observer of this data
@@ -496,10 +551,9 @@ bool cstore_v2::operator==(cstore_v2 const& rhs) const noexcept {
              rhs._encoded_state
                | std::views::transform(dereference_encoded_state));
 }
-
 auto cstore_v2::get_base_offset() const noexcept -> model::offset {
     if (_size == 0) {
-        return model::offset{};
+        return {};
     }
     if (_size <= _in_buffer.size()) {
         // no data in the encoders yet
@@ -511,7 +565,7 @@ auto cstore_v2::get_base_offset() const noexcept -> model::offset {
 }
 auto cstore_v2::get_committed_offset() const noexcept -> model::offset {
     if (_size == 0) {
-        return model::offset{};
+        return {};
     }
 
     if (_size <= _in_buffer.size()) {
