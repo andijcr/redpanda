@@ -977,7 +977,19 @@ public:
     const_iterator at_index(size_t ix) const;
     const_iterator prev(const_iterator const& it) const;
 
-    void insert(const segment_meta&);
+    /// check that the current sm can be inserted without breaking the
+    /// precondition of a segment not being completely covered by another
+    /// already in the segment_meta_cstore
+    bool can_be_inserted(const segment_meta&) const;
+    /// returns the range of segments that will be removed if the segment meta
+    /// is inserted. the list has first base_offset >= in.base_offset, and last
+    /// committed_offset <=in.commited_offset
+    auto covered_range(const segment_meta& in) const
+      -> std::pair<const_iterator, const_iterator>;
+    /// insert segment_meta, possibly replacing some other segments. false means
+    /// that the parameter cannot be inserted, it breaks the precondition (see
+    /// can_be_inserted())
+    bool insert(const segment_meta&);
 
     class [[nodiscard]] append_tx {
     public:
