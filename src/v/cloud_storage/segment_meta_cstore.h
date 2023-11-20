@@ -411,13 +411,19 @@ private:
     }
 
     const value_t& dereference() const {
-        vassert(!is_end(), "Can't dereference iterator");
+        if (unlikely(is_end())) {
+            ss::throw_with_backtrace<std::logic_error>(
+              "Can't dereference end iterator");
+        }
         return *_inner_it;
     }
 
     void increment() {
 #ifndef NDEBUG
-        vassert(!is_end(), "can't increment iterator");
+        if (unlikely(is_end())) {
+            ss::throw_with_backtrace<std::logic_error>(
+              "Can't increment end iterator");
+        }
 #endif
         ++_ix_column;
         ++_inner_it;
