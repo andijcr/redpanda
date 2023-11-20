@@ -848,15 +848,29 @@ void partition_manifest::reset_scrubbing_metadata() {
 
 std::optional<size_t> partition_manifest::move_aligned_offset_range(
   const segment_meta& replacing_segment) {
+    // nullopt means that the replacing_segment can't be inserted in the
+    // manifest, either by breaking an invariant in segment_map, or by failing
+    // to generate a distinct name
+    if (unlikely(!_segments.can_be_inserted(replacing_segment))) {
+        // log an error, as it's not expected for a segment at this stage to
+        // fail this check. safe_segment_meta_to_add() fail before this
+        vlog(
+          cst_log.error,
+          "{} segment {:s} can't be inserted because it's covered by another "
+          "in the manifest",
+          _ntp,
+          replacing_segment);
+        return std::nullopt;
+    }
+
     size_t total_replaced_size = 0;
+
     auto replacing_path = generate_remote_segment_name(replacing_segment);
-    for (auto it = _segments.lower_bound(replacing_segment.base_offset),
-              end_it = _segments.end();
-         it != end_it
-         // The segment is considered replaced only if all its
-         // offsets are covered by new segment's offset range
-         && it->base_offset >= replacing_segment.base_offset
-         && it->committed_offset <= replacing_segment.committed_offset;
+
+    // The segment is considered replaced only if all its
+    // offsets are covered by new segment's offset range
+    for (auto [it, end_covered] = _segments.covered_range(replacing_segment);
+         it != end_covered;
          ++it) {
         if (generate_remote_segment_name(*it) == replacing_path) {
             // The replacing segment shouldn't be exactly the same as the
@@ -891,6 +905,9 @@ bool partition_manifest::add(segment_meta meta) {
     if (meta.ntp_revision == model::initial_revision_id{}) {
         meta.ntp_revision = _rev;
     }
+
+    // move_aligned_offset_range not failing means that this insert will not
+    // fail either
     _segments.insert(meta);
 
     _last_offset = std::max(meta.committed_offset, _last_offset);
