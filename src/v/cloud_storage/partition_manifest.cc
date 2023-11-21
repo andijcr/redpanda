@@ -936,7 +936,7 @@ bool partition_manifest::add(
 }
 
 size_t partition_manifest::safe_segment_meta_to_add(
-  std::vector<segment_meta> meta_list) const {
+  std::span<const segment_meta> meta_list) const {
     // TODO should meta_list be sorted?
     // vassert(std::ranges::is_sorted(meta_list....));
 
@@ -1091,7 +1091,8 @@ size_t partition_manifest::safe_segment_meta_to_add(
 }
 
 bool partition_manifest::safe_segment_meta_to_add(const segment_meta& m) const {
-    return safe_segment_meta_to_add(std::vector<segment_meta>{m}) == 1;
+    return safe_segment_meta_to_add(std::span<const segment_meta, 1>{&m, 1})
+           == 1;
 }
 
 partition_manifest
