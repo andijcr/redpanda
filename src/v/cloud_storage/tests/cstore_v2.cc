@@ -119,6 +119,12 @@ private:
     };
 
     struct w_state : public ss::enable_lw_shared_from_this<w_state> {
+        // TODO add the ability to handle non modulo 16 number of segments:
+        // while in normal append mode, the w_state is filled (and closed) in blocks of 16, in replace mode the w_state should be able to replace segments that spans to the next w_state.
+        // in general an aligned replace operation creates a new w_state with a smaller size. 
+        // how do we handle this? an external buffer, or by padding the data? and if we add an external buffer, do we get rid of the one in the cstore?
+        // in the end, external buffer seems the easy-to-understand (and hopefully to debug) solution
+
         // NOTEANDREA should be possible to have an upper bound and move this to
         // std::array invariants: this is sorted on key, has few elements, and
         // key in contained in the range of base_offsets covered by this span
@@ -134,6 +140,10 @@ private:
         // segment_meta saved in this frame
         encoder_tuple_t _frame_fields{};
 
+        // the segments_meta are kept here until they are enough (16) to be able to inserted into _frame_fields
+        // a stronger type that allocates on the heap but caps the size would be nice, but vector will do 
+        std::vector<segment_meta> _tail_buffer{};        
+
         w_state() = default;
         // disable public copy and move since get_w_state generates back-links
         // to this object. use clone() and get_r_state() instead
@@ -148,7 +158,7 @@ private:
                 lhs_enc.get_row_count(),
                 lhs_enc.get_last_value(),
                 lhs_enc.copy()};
-          })} {}
+          })}, _tail_buffer{lhs._tail_buffer} {}
         w_state& operator=(w_state const& oth) {
             if (this != &oth) {
                 auto cpy = oth;
@@ -161,8 +171,9 @@ private:
         w_state(w_state& lhs, lw_copy_t)
           : _frame_hints{lhs._frame_hints}
           , _frame_fields{tuple_for<sm_num_fields>([&](auto ix) {
+              // this constructor shared the underlying buffer
               return encoder_t<ix>(&std::get<ix>(lhs._frame_fields));
-          })} {}
+          })}, _tail_buffer{lhs._tail_buffer} {}
 
     public:
         ~w_state() = default;
@@ -176,11 +187,13 @@ private:
         operator==(w_state const& lhs, w_state const& rhs) noexcept {
             // only frame fields contains data that matters, _frame_hints are a
             // lookup optimization
-            return lhs._frame_fields == rhs._frame_fields;
+            return std::tie(lhs._frame_fields, lhs._tail_buffer)==std::tie(rhs._frame_fields, rhs._tail_buffer);
         }
 
         auto get_base_offset() const -> model::offset {
             // precondition: this is not empty
+            auto & base_offset = std::get<sm_base_offset_position>(_frame_fields);
+            return base_offset.? 
             return model::offset(
               std::get<sm_base_offset_position>(_frame_fields)
                 .get_initial_value());
@@ -188,9 +201,9 @@ private:
 
         auto get_commited_offset() const -> model::offset {
             // precondition: this is not empty
-            return model::offset(
+            return _tail_buffer.empty()? model::offset(
               std::get<sm_committed_offset_position>(_frame_fields)
-                .get_last_value());
+                .get_last_value()): _tail_buffer.back().committed_offset;
         }
 
         auto get_last_range() const noexcept -> segment_range {
