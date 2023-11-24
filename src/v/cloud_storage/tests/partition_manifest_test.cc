@@ -21,10 +21,12 @@
 #include "random/generators.h"
 #include "seastarx.h"
 #include "serde/serde.h"
+#include "utils/human.h"
 #include "utils/tracking_allocator.h"
 
 #include <seastar/testing/test_case.hh>
 #include <seastar/testing/thread_test_case.hh>
+#include <seastar/util/file.hh>
 
 #include <boost/test/tools/context.hpp>
 #include <boost/test/tools/old/interface.hpp>
@@ -2956,4 +2958,128 @@ SEASTAR_TEST_CASE(test_partition_manifest_gaps_and_overlaps) {
     check_consistency(clone_manifest_copy, "clone_manifest_copy");
 
     return ss::now();
+}
+
+SEASTAR_THREAD_TEST_CASE(read_test) {
+    auto test_log = ss::logger{"manifest_tester"};
+    auto args = std::span<char*>{
+      boost::unit_test::framework::master_test_suite().argv,
+      size_t(boost::unit_test::framework::master_test_suite().argc)};
+    constexpr static auto env_var_name = std::string_view{"MANIFEST_FILE"};
+    auto* file_p = std::getenv(env_var_name.data());
+    if (!file_p) {
+        test_log.info("set {} env var", env_var_name);
+        return;
+    }
+
+    auto file_name = std::string_view{file_p};
+    if (!std::filesystem::exists(file_name)) {
+        test_log.error("can't find {}", file_name);
+        return;
+    }
+
+    auto manifest_bin = iobuf{ss::util::read_entire_file(file_name).get()};
+
+    test_log.info(
+      "manifest file {} size {}",
+      file_name,
+      human::bytes(manifest_bin.size_bytes()));
+
+    auto pmanifest = partition_manifest{};
+    pmanifest.from_iobuf(manifest_bin.share(0, manifest_bin.size_bytes()));
+
+    test_log.info(
+      "{} dumping segments {}", pmanifest.get_ntp(), pmanifest.size());
+    auto segments = std::vector<segment_meta>{};
+    for (auto it = pmanifest.begin(), end = pmanifest.end(); it != end; ++it) {
+        segments.push_back(*it);
+    }
+    test_log.info(
+      "final size {}, equal size? {}",
+      segments.size(),
+      segments.size() == pmanifest.size());
+
+    test_log.info("running sanity check");
+    sanity_check_manifest(segments);
+    if (!segments.empty()) {
+        BOOST_CHECK(segments.back() == pmanifest.last_segment());
+    }
+
+    test_log.info("sorting again for good measure");
+    auto segments_copy = segments;
+    std::ranges::sort(segments, std::less<>{}, &segment_meta::base_offset);
+    BOOST_CHECK(segments_copy == segments);
+    auto clonemanifest = partition_manifest{
+      pmanifest.get_ntp(), pmanifest.get_revision_id()};
+    BOOST_CHECK(
+      segments.size() == clonemanifest.safe_segment_meta_to_add(segments));
+
+    test_log.info("check if re-adding segments might trigger an issue");
+    for (auto e : segments) {
+        clonemanifest.add(e);
+    }
+
+    test_log.info("checks that the spillovers are consistent");
+    auto spillovers = std::vector<segment_meta>{};
+    for (auto it = pmanifest.get_spillover_map().begin(),
+              end = pmanifest.get_spillover_map().end();
+         it != end;
+         ++it) {
+        spillovers.push_back(*it);
+    }
+    test_log.info("spillovers: {}", spillovers.size());
+    sanity_check_manifest(spillovers);
+
+    test_log.info("search all the offsets in the manifest, this did trigger "
+                  "issues");
+    for (auto& s : segments) {
+        BOOST_CHECK(*pmanifest.find(s.base_offset) == s);
+    }
+
+    for (auto off = pmanifest.begin()->base_offset;
+         off <= pmanifest.get_last_offset();
+         ++off) {
+        if (off % 10000 == 0) {
+            ss::maybe_yield().get();
+            vlog(test_log.info, "@offset {}", off);
+        }
+        auto it = pmanifest.find(off);
+        if (it != pmanifest.end()) {
+            BOOST_CHECK_EQUAL(*std::ranges::lower_bound(segments, *it), *it);
+        }
+    }
+
+    /*
+        ss::smp::invoke_on_all(ss::coroutine::lambda([&]() -> ss::future<> {
+            for (auto it = std::ranges::next(
+                   manifest_bins.begin(), ss::this_shard_id(),
+       manifest_bins.end()); it != manifest_bins.end(); it =
+       std::ranges::next(it, ss::smp::count, manifest_bins.end())) {
+                vlog(test_log.info, "file {}", it->first);
+                auto pm = cloud_storage::partition_manifest{};
+                pm.from_iobuf(it->second.copy());
+                auto offset_diff = pm.get_last_offset() -
+       pm.begin()->base_offset; vlog( test_log.info, "manifest {} start_offset
+       {} base_offset range in segments [{}, "
+                  "{}] offset_diff {}\n",
+                  pm.get_ntp(),
+                  pm.get_start_offset(),
+                  pm.begin()->base_offset,
+                  pm.get_last_offset(),
+                  offset_diff);
+
+                for (auto off = pm.begin()->base_offset;
+                     off <= pm.get_last_offset();
+                     ++off) {
+                    if (off % 100 == 0) {
+                        co_await ss::maybe_yield();
+                        vlog(test_log.info, "@offset {}", off);
+                    }
+                    std::ignore = pm.find(off);
+                }
+            }
+        }))
+          .get();
+
+          */
 }

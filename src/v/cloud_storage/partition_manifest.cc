@@ -965,7 +965,7 @@ size_t partition_manifest::safe_segment_meta_to_add(
                   cst_log.error,
                   "[{}] New segment does not line up with last offset of empty "
                   "log: "
-                  "last_offset: {}, new_segment: {:s}",
+                  "last_offset: {}, new_segment: {:c}",
                   _ntp,
                   subst.last_offset,
                   m);
@@ -983,9 +983,9 @@ size_t partition_manifest::safe_segment_meta_to_add(
                   }
 
                   return ssx::sformat(
-                    "{{anomaly_types: ({}), new_segment: {:s}, "
+                    "{{anomaly_types: ({}), new_segment: {:c}, "
                     "previous_segment: "
-                    "{:s}}}",
+                    "{}}}",
                     fmt::join(
                       smas | std::views::transform(&anomaly_meta::type), ", "),
                     smas.begin()->at,
