@@ -2961,7 +2961,6 @@ SEASTAR_TEST_CASE(test_partition_manifest_gaps_and_overlaps) {
 }
 
 SEASTAR_THREAD_TEST_CASE(read_test) {
-    auto test_log = ss::logger{"manifest_tester"};
     auto args = std::span<char*>{
       boost::unit_test::framework::master_test_suite().argv,
       size_t(boost::unit_test::framework::master_test_suite().argc)};
@@ -3036,50 +3035,51 @@ SEASTAR_THREAD_TEST_CASE(read_test) {
         BOOST_CHECK(*pmanifest.find(s.base_offset) == s);
     }
 
-    for (auto off = pmanifest.begin()->base_offset;
-         off <= pmanifest.get_last_offset();
-         ++off) {
-        if (off % 10000 == 0) {
-            ss::maybe_yield().get();
-            vlog(test_log.info, "@offset {}", off);
-        }
-        auto it = pmanifest.find(off);
-        if (it != pmanifest.end()) {
-            BOOST_CHECK_EQUAL(*std::ranges::lower_bound(segments, *it), *it);
-        }
-    }
-
-    /*
-        ss::smp::invoke_on_all(ss::coroutine::lambda([&]() -> ss::future<> {
-            for (auto it = std::ranges::next(
-                   manifest_bins.begin(), ss::this_shard_id(),
-       manifest_bins.end()); it != manifest_bins.end(); it =
-       std::ranges::next(it, ss::smp::count, manifest_bins.end())) {
-                vlog(test_log.info, "file {}", it->first);
-                auto pm = cloud_storage::partition_manifest{};
-                pm.from_iobuf(it->second.copy());
-                auto offset_diff = pm.get_last_offset() -
-       pm.begin()->base_offset; vlog( test_log.info, "manifest {} start_offset
-       {} base_offset range in segments [{}, "
-                  "{}] offset_diff {}\n",
-                  pm.get_ntp(),
-                  pm.get_start_offset(),
-                  pm.begin()->base_offset,
-                  pm.get_last_offset(),
-                  offset_diff);
-
-                for (auto off = pm.begin()->base_offset;
-                     off <= pm.get_last_offset();
-                     ++off) {
-                    if (off % 100 == 0) {
-                        co_await ss::maybe_yield();
-                        vlog(test_log.info, "@offset {}", off);
+    BOOST_REQUIRE(std::ranges::is_sorted(
+      segments, std::less<>{}, &segment_meta::base_offset));
+    ss::smp::invoke_on_all(
+      ss::coroutine::lambda(
+        [segments, pmanifest_data = pmanifest.to_iobuf()]() -> ss::future<> {
+            auto pmanifest = partition_manifest{};
+            pmanifest.from_iobuf(pmanifest_data.copy());
+            thread_local auto rate = ss::logger::rate_limit(5s);
+            auto err_c = 0;
+            for (auto off = pmanifest.begin()->base_offset
+                            + model::offset_delta(ss::this_shard_id()),
+                      end = pmanifest.get_last_offset();
+                 off <= end && err_c < 10;
+                 off += model::offset_delta(ss::smp::count)) {
+                test_log.log(ss::log_level::info, rate, "@offset {}", off);
+                auto manifest_seg = [&]() -> std::optional<segment_meta> {
+                    auto it = pmanifest.find(off);
+                    if (it == pmanifest.end()) {
+                        return std::nullopt;
                     }
-                    std::ignore = pm.find(off);
+                    return *it;
+                }();
+                auto seg_seg = [&]() -> std::optional<segment_meta> {
+                    auto seg = std::ranges::lower_bound(
+                      segments, off, std::less<>{}, &segment_meta::base_offset);
+                    if (seg == segments.end()) {
+                        return std::nullopt;
+                    }
+                    if (seg->base_offset != off) {
+                        return std::nullopt;
+                    }
+
+                    return *seg;
+                }();
+
+                if (seg_seg != manifest_seg) {
+                    err_c++;
+                    test_log.error(
+                      "pmanifest.find({}) = {}. backing: {}",
+                      off,
+                      manifest_seg,
+                      seg_seg);
                 }
+                co_await ss::maybe_yield();
             }
         }))
-          .get();
-
-          */
+      .get();
 }
