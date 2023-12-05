@@ -69,23 +69,34 @@ public:
 
     value_t get_frame_initial_value() const noexcept { return _frame_initial; }
 
+    void increment(size_t n = 1) {
+        if (unlikely(n == 0)) {
+            return;
+        }
+        while (n-- > 0) {
+            _pos++;
+            if ((_pos & index_mask) == 0) {
+                if (n > (index_mask+5000)) {
+                    // we don't need to do a full read, this is not the last
+                    // time we cross #buffer_depth elements
+                    _decoder->skip_one();
+                } else {
+                    // Read next buffer from the decoder
+                    _read_buf = {};
+                    if (!_decoder->read(_read_buf)) {
+                        // If the decoder is empty we need to continue reading
+                        // data from the head of the column.
+                        _read_buf = _head;
+                    }
+                }
+            }
+        }
+    }
+
 private:
     const value_t& dereference() const {
         auto ix = _pos & index_mask;
         return _read_buf.at(ix);
-    }
-
-    void increment() {
-        _pos++;
-        if ((_pos & index_mask) == 0) {
-            // Read next buffer from the decoder
-            _read_buf = {};
-            if (!_decoder->read(_read_buf)) {
-                // If the decoder is empty we need to continue reading data from
-                // the head of the column.
-                _read_buf = _head;
-            }
-        }
     }
 
     bool equal(const self_t& other) const {
@@ -212,7 +223,7 @@ public:
             return end();
         }
         auto it = begin();
-        std::advance(it, index);
+        it.increment(index);
         return it;
     }
 

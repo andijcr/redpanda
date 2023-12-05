@@ -189,6 +189,20 @@ template<size_t N_BITS, size_t NUM_ELEMENTS>
 constexpr auto serialized_size = whole_bytes<N_BITS> * NUM_ELEMENTS
                                  + residual_bits<N_BITS> * NUM_ELEMENTS / 8;
 
+template<size_t NUM_ELEMENTS>
+constexpr auto get_serialized_size(uint8_t nbits) {
+    size_t sz = {};
+    auto impl = [&](auto N_BITS) {
+        if (nbits == N_BITS) {
+            sz = serialized_size<N_BITS, NUM_ELEMENTS>;
+        }
+    };
+    [&]<size_t... Is>(std::index_sequence<Is...>) {
+        (impl(std::integral_constant<size_t, Is>{}), ...);
+    }(std::make_index_sequence<sizeof(uint64_t) * 8 + 1>{});
+    return sz;
+}
+
 static_assert(
   unsigned_decomposition<41>
   == std::to_array<std::pair<size_t, size_t>>({{4, 0}, {1, 32}}));
@@ -599,6 +613,14 @@ public:
         return true;
     }
 
+    void skip_one() {
+        if (_pos == _total) {
+            vassert(false, "skip_one called on an empty decoder");
+        }
+
+        auto nbits = _data.consume_type<uint8_t>();
+        _data.skip(details::decomp::get_serialized_size<row_width>(nbits));
+    }
     /// Skip rows
     void skip(const deltafor_stream_pos_t<TVal>& st) {
         _data.skip(st.offset);
