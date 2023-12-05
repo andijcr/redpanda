@@ -1342,3 +1342,76 @@ BOOST_AUTO_TEST_CASE(test_segment_meta_cstore_append_retrieve_edge_case) {
       = metadata[cloud_storage::cstore_max_frame_size * 2].base_offset;
     BOOST_CHECK_NO_THROW(store.lower_bound(last_frame_first_offset));
 }
+
+SEASTAR_TEST_CASE(test_hints_with_gaps_edge_case) {
+    static auto next_sm_gen = [] {
+        return [base_offset = model::offset{0}]() mutable {
+            auto bo = base_offset;
+            auto co = bo + model::offset{2};
+            base_offset = model::next_offset(co);
+            return segment_meta{
+              .base_offset = bo,
+              .committed_offset = co,
+            };
+        };
+    };
+
+    // constexpr static auto hints_modulo=details::FOR_buffer_depth *
+    // cstore_sampling_rate;
+    constexpr static auto frame_size = cstore_max_frame_size;
+
+    constexpr static auto n_elements_with_a_gap = [](
+                                                    segment_meta_cstore& store,
+                                                    size_t n_elements,
+                                                    size_t gap_pos,
+                                                    size_t n_elements_after) {
+        auto next_sm = next_sm_gen();
+        BOOST_REQUIRE(gap_pos < n_elements);
+        for (auto i = 0; i < gap_pos; ++i) {
+            store.insert(next_sm());
+        }
+
+        auto last_e = next_sm();
+        auto gap_e = last_e;
+        vlog(test.info, "skipping @{} {}", gap_pos, gap_e);
+
+        for (auto i = gap_pos + 1; i < n_elements; ++i) {
+            last_e = next_sm();
+            store.insert(last_e);
+        }
+
+        store.flush_write_buffer();
+        store.insert(gap_e);
+        store.flush_write_buffer();
+        for (auto i = 0; i < n_elements_after; ++i) {
+            last_e = next_sm();
+            store.insert(last_e);
+        }
+
+        return last_e.base_offset;
+    };
+
+    static auto run_test = [](size_t gap_pos) -> ss::future<> {
+        auto store = segment_meta_cstore{};
+        auto last_base_offset = n_elements_with_a_gap(
+          store, frame_size, gap_pos, frame_size);
+        store.flush_write_buffer();
+        vlog(
+          test.info,
+          "store last_base_offset: {}, sz: {}",
+          last_base_offset,
+          store.size());
+        for (auto i = model::offset{0}; i <= last_base_offset; ++i) {
+            if (i() % 50 == 0) co_await ss::maybe_yield();
+            std::ignore = store.find(i);
+        }
+    };
+
+    co_await ss::smp::invoke_on_all(ss::coroutine::lambda([]() -> ss::future<> {
+        for (auto i = size_t(ss::this_shard_id()); i < frame_size;
+             i += ss::smp::count) {
+            vlog(test.info, "testing gap @{}", i);
+            co_await run_test(i);
+        }
+    }));
+}
