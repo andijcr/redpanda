@@ -567,15 +567,25 @@ public:
             }
 
             auto& hint_vec = hint_it->second.value();
-            auto hint_bo = hint_vec.at(
-              static_cast<size_t>(segment_meta_ix::base_offset));
-
             // The hint can only be applied within the same column_store_frame
             // instance. If the hint belongs to the previous frame we need to
-            // materialize without optimization.
-            if (_base_offset
-                  .get_frame_iterator_by_element_index(base_offset_iter.index())
-                  ->is_applicable(hint_bo)) {
+            // materialize without optimization. check that a hint element can
+            // applied to a frame without breaking preconditions
+            auto is_applicable_in_column =
+              [&, e_index = base_offset_iter.index()](auto tuple_index) {
+                  return std::get<tuple_index>(columns())
+                    .get_frame_iterator_by_element_index(e_index)
+                    ->is_applicable(hint_vec.at(tuple_index));
+              };
+
+            auto all_hints_applicable = [&]<size_t... Is>(
+                                          std::index_sequence<Is...>) {
+                return (
+                  is_applicable_in_column(std::integral_constant<size_t, Is>{})
+                  && ...);
+            }(std::make_index_sequence<std::tuple_size_v<hint_vec_t>>());
+
+            if (all_hints_applicable) {
                 return hint_vec;
             }
 
