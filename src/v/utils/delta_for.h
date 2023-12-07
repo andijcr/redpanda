@@ -190,17 +190,17 @@ constexpr auto serialized_size = whole_bytes<N_BITS> * NUM_ELEMENTS
                                  + residual_bits<N_BITS> * NUM_ELEMENTS / 8;
 
 template<size_t NUM_ELEMENTS>
-constexpr auto get_serialized_size(uint8_t nbits) {
-    size_t sz = {};
-    auto impl = [&](auto N_BITS) {
-        if (nbits == N_BITS) {
-            sz = serialized_size<N_BITS, NUM_ELEMENTS>;
-        }
-    };
-    [&]<size_t... Is>(std::index_sequence<Is...>) {
-        (impl(std::integral_constant<size_t, Is>{}), ...);
-    }(std::make_index_sequence<sizeof(uint64_t) * 8 + 1>{});
-    return sz;
+constexpr auto get_serialized_size(uint8_t nbits) -> size_t {
+    auto data = []<size_t... Is>(
+      std::index_sequence<Is...>) -> std::array<uint8_t, sizeof(uint64_t) * 8> {
+        return {serialized_size<Is, NUM_ELEMENTS>...};
+    }
+    (std::make_index_sequence<sizeof(uint64_t) * 8>());
+
+    if (nbits >= data.size()) {
+        return sizeof(uint64_t) * NUM_ELEMENTS;
+    }
+    return data[nbits];
 }
 
 static_assert(

@@ -76,7 +76,7 @@ public:
         while (n-- > 0) {
             _pos++;
             if ((_pos & index_mask) == 0) {
-                if (n > (index_mask+5000)) {
+                if (n > (index_mask + 5000)) {
                     // we don't need to do a full read, this is not the last
                     // time we cross #buffer_depth elements
                     _decoder->skip_one();
