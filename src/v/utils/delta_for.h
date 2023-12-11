@@ -176,31 +176,15 @@ constexpr auto unsigned_decomposition = [] {
     return decomposition;
 }();
 
-template<size_t N_BITS>
-constexpr auto whole_bytes = N_BITS / 8;
-template<size_t N_BITS>
-constexpr auto residual_bits = N_BITS % 8;
-template<size_t N_BITS>
-constexpr auto residual_save_mask = N_BITS == 64
-                                      ? uint64_t(-1)
-                                      : (uint64_t(1) << (N_BITS)) - 1u;
+constexpr auto whole_bytes(size_t n_bits) { return n_bits / 8; };
+constexpr auto residual_bits(size_t n_bits) { return n_bits % 8; };
+constexpr auto residual_save_mask(size_t n_bits) {
+    return n_bits == 64 ? uint64_t(-1) : (uint64_t(1) << n_bits) - 1u;
+}
 
-template<size_t N_BITS, size_t NUM_ELEMENTS>
-constexpr auto serialized_size = whole_bytes<N_BITS> * NUM_ELEMENTS
-                                 + residual_bits<N_BITS> * NUM_ELEMENTS / 8;
-
-template<size_t NUM_ELEMENTS>
-constexpr auto get_serialized_size(uint8_t nbits) -> size_t {
-    auto data = []<size_t... Is>(
-      std::index_sequence<Is...>) -> std::array<uint8_t, sizeof(uint64_t) * 8> {
-        return {serialized_size<Is, NUM_ELEMENTS>...};
-    }
-    (std::make_index_sequence<sizeof(uint64_t) * 8>());
-
-    if (nbits >= data.size()) {
-        return sizeof(uint64_t) * NUM_ELEMENTS;
-    }
-    return data[nbits];
+constexpr auto serialized_size(size_t num_elements, uint8_t nbits) -> size_t {
+    return whole_bytes(nbits) * num_elements
+           + residual_bits(nbits) * num_elements / 8;
 }
 
 static_assert(
@@ -214,9 +198,9 @@ static_assert(
 static_assert(
   unsigned_decomposition<64> == std::array{std::pair{size_t{8}, size_t{0}}});
 
-static_assert(whole_bytes<41> == 5);
-static_assert(residual_bits<41> == 1);
-static_assert(residual_save_mask<41> == 0x1'ff'ffffffff);
+static_assert(whole_bytes(41) == 5);
+static_assert(residual_bits(41) == 1);
+static_assert(residual_save_mask(41) == 0x1'ff'ffffffff);
 
 // __uint128_t being non-standard needs some special treatment
 template<typename T>
@@ -511,7 +495,7 @@ private:
     void pack(std::span<const TVal, row_width> input) {
         if constexpr (N_BITS > 0) {
             using namespace details::decomp;
-            std::array<uint8_t, serialized_size<N_BITS, row_width>> buff;
+            std::array<uint8_t, serialized_size(N_BITS, row_width)> buff;
 
             auto end_iter = buff.begin();
             // step 1: extract and serialize whole bytes, following
@@ -537,11 +521,11 @@ private:
             // endian wise, and serialize it.
             // masking is not strictly necessary, but it ensures that the
             // elements to not clash once packed
-            constexpr static auto residual = residual_bits<N_BITS>;
+            constexpr static auto residual = residual_bits(N_BITS);
 
             if constexpr (residual > 0) {
-                constexpr static auto prev_saved_bits = whole_bytes<N_BITS> * 8;
-                constexpr static auto mask = residual_save_mask<N_BITS>;
+                constexpr static auto prev_saved_bits = whole_bytes(N_BITS) * 8;
+                constexpr static auto mask = residual_save_mask(N_BITS);
                 auto bits = [&]<size_t... Is>(std::index_sequence<Is...>) {
                     // select residual bits, shift them down to zero and then
                     // shift them to the appropriate position
@@ -619,7 +603,7 @@ public:
         }
 
         auto nbits = _data.consume_type<uint8_t>();
-        _data.skip(details::decomp::get_serialized_size<row_width>(nbits));
+        _data.skip(details::decomp::serialized_size(row_width, nbits));
     }
     /// Skip rows
     void skip(const deltafor_stream_pos_t<TVal>& st) {
@@ -635,7 +619,7 @@ private:
         if constexpr (N_BITS > 0) {
             using namespace details::decomp;
 
-            std::array<uint8_t, serialized_size<N_BITS, row_width>> tmp_buffer;
+            std::array<uint8_t, serialized_size(N_BITS, row_width)> tmp_buffer;
             _data.consume_to(tmp_buffer.size(), tmp_buffer.begin());
 
             auto end_it = tmp_buffer.cbegin();
@@ -660,10 +644,10 @@ private:
             // step 2: unpack leftover bits into from a single __uint128_t,
             // little endian wise. masking is not strictly necessary, but it
             // ensures that the elements to not clash once unpacked
-            constexpr static auto residual = residual_bits<N_BITS>;
+            constexpr static auto residual = residual_bits(N_BITS);
             if constexpr (residual > 0) {
-                constexpr static auto prev_saved_bits = whole_bytes<N_BITS> * 8;
-                constexpr static auto mask = residual_save_mask<N_BITS>;
+                constexpr static auto prev_saved_bits = whole_bytes(N_BITS) * 8;
+                constexpr static auto mask = residual_save_mask(N_BITS);
 
                 constexpr static auto bytes_to_restore = residual
                                                          * output.size() / 8;
