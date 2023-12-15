@@ -55,7 +55,9 @@ static constexpr std::string_view min_topic_manifest_json = R"json({
     "cleanup_policy_bitflags": null,
     "compaction_strategy": null,
     "timestamp_type": null,
-    "segment_size": null
+    "segment_size": null,
+    "retention_bytes": null,
+    "retention_duration": null
 })json";
 
 static constexpr std::string_view full_topic_manifest_json = R"json({
@@ -242,10 +244,9 @@ SEASTAR_THREAD_TEST_CASE(full_config_update_all_fields_correct) {
 
 SEASTAR_THREAD_TEST_CASE(topic_manifest_min_serialization) {
     manifest_topic_configuration min_cfg{cfg};
-    min_cfg.properties.retention_bytes = tristate<size_t>(
-      std::numeric_limits<size_t>::min());
+    min_cfg.properties.retention_bytes = tristate<size_t>(disable_tristate);
     min_cfg.properties.retention_duration = tristate<std::chrono::milliseconds>(
-      std::chrono::milliseconds::min());
+      disable_tristate);
     min_cfg.properties.segment_size = std::make_optional(
       std::numeric_limits<size_t>::min());
     topic_manifest m(min_cfg, model::initial_revision_id{0});
@@ -359,9 +360,7 @@ SEASTAR_THREAD_TEST_CASE(test_negative_property_manifest) {
     BOOST_REQUIRE_EQUAL(64, tp_cfg->partition_count);
     BOOST_REQUIRE_EQUAL(6, tp_cfg->replication_factor);
     auto tp_props = tp_cfg->properties;
-    BOOST_REQUIRE(tp_props.retention_duration.has_optional_value());
-    BOOST_REQUIRE_EQUAL(
-      tp_props.retention_duration.value().count(), -36000000000);
+    BOOST_REQUIRE(tp_props.retention_duration.is_disabled());
 
     // The usigned types that were passed in negative values shouldn't be set.
     BOOST_REQUIRE(tp_props.retention_bytes.is_disabled());

@@ -122,8 +122,7 @@ struct topic_manifest_handler
                   disable_tristate};
             } else if (_key == "retention_duration") {
                 _properties.retention_duration
-                  = tristate<std::chrono::milliseconds>(
-                    std::chrono::milliseconds(i));
+                  = tristate<std::chrono::milliseconds>{disable_tristate};
             } else {
                 return false;
             }
