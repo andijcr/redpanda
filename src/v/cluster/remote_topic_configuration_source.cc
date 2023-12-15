@@ -93,10 +93,13 @@ static void apply_retention_defaults(
     if (!target.cleanup_policy_bitflags) {
         target.cleanup_policy_bitflags = source.cleanup_policy_bitflags;
     }
-    if (!target.retention_bytes.has_optional_value()) {
+
+    // in the interest of __not__ decreasing the target retention, copy the
+    // properties only if no explicit value is already set
+    if (target.retention_bytes.is_empty()) {
         target.retention_bytes = source.retention_bytes;
     }
-    if (!target.retention_duration.has_optional_value()) {
+    if (target.retention_duration.is_empty()) {
         target.retention_duration = source.retention_duration;
     }
 }
