@@ -799,8 +799,27 @@ ss::future<>
 config_manager::store_delta(cluster_config_delta_cmd_data const& data) {
     auto& cfg = config::shard_local_cfg();
 
+    auto in_the_middle_of_upgrade
+      = _feature_table.local().get_active_version()
+        != _feature_table.local().get_latest_logical_version();
     for (const auto& u : data.upsert) {
+        // perform conversion of u.key from alias to primary name for property,
+        // then cleanup any stored alias for the property. this is done to make
+        // sure that a single property has only one name inside _raw_values.
+        // skip this process during cluster upgrades, since we don't know if the
+        // node will be reverted and if the old version can understand the new
+        // name, if the alias was introduced in the new release. passthrough
+        // unknown values, to not silently discard values
+
         /// skip section
+        if (unlikely(in_the_middle_of_upgrade)) {
+            // in the middle of an upgrade do not perform conversions, in case
+            // this node gets reverted to a version that use a key as primary
+            // name
+            _raw_values[u.key] = u.value;
+            continue;
+        }
+
         if (!cfg.contains(u.key)) {
             // passthrough unknown values
             _raw_values[u.key] = u.value;
