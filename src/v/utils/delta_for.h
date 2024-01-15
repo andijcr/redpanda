@@ -451,6 +451,8 @@ public:
     /// Return number of rows stored in the underlying iobuf instance
     uint32_t get_row_count() const noexcept { return _cnt; }
 
+    bool empty() const noexcept { return get_row_count() == 0; }
+
     /// Get initial value used to create the encoder
     TVal get_initial_value() const noexcept { return _initial; }
 
