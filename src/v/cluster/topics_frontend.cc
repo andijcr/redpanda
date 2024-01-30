@@ -508,38 +508,34 @@ ss::future<topic_result> topics_frontend::replicate_create_topic(
   allocation_units::pointer units,
   model::timeout_clock::time_point timeout) {
     auto tp_ns = cfg.tp_ns;
-    create_topic_cmd cmd(
-      tp_ns,
-      topic_configuration_assignment(
-        std::move(cfg), units->copy_assignments()));
+    auto tp_cfg = topic_configuration_assignment(
+      std::move(cfg), units->copy_assignments());
 
-    for (auto& p_as : cmd.value.assignments) {
-        std::shuffle(
-          p_as.replicas.begin(),
-          p_as.replicas.end(),
-          random_generators::internal::gen);
+    for (auto& p_as : tp_cfg.assignments) {
+        std::ranges::shuffle(p_as.replicas, random_generators::internal::gen);
     }
 
-    return replicate_and_wait(_stm, _as, std::move(cmd), timeout)
-      .then_wrapped([tp_ns = std::move(tp_ns), units = std::move(units)](
-                      ss::future<std::error_code> f) mutable {
-          try {
-              auto error_code = f.get0();
-              auto ret_f = ss::now();
-              return ret_f.then(
-                [tp_ns = std::move(tp_ns), error_code]() mutable {
-                    return topic_result(std::move(tp_ns), map_errc(error_code));
-                });
+    auto process_create_cmd = [&](auto tp_ns, auto cmd, auto units) {
+        return replicate_and_wait(_stm, _as, std::move(cmd), timeout)
+          .then_wrapped([tp_ns = std::move(tp_ns), units = std::move(units)](
+                          ss::future<std::error_code> f) mutable {
+              try {
+                  auto error_code = f.get0();
+                  return topic_result(std::move(tp_ns), map_errc(error_code));
+              } catch (...) {
+                  vlog(
+                    clusterlog.warn,
+                    "Unable to create topic - {}",
+                    std::current_exception());
+                  return topic_result(
+                    std::move(tp_ns), errc::replication_error);
+              }
+          });
+    };
 
-          } catch (...) {
-              vlog(
-                clusterlog.warn,
-                "Unable to create topic - {}",
-                std::current_exception());
-              return ss::make_ready_future<topic_result>(
-                topic_result(std::move(tp_ns), errc::replication_error));
-          }
-      });
+    create_topic_cmd cmd(tp_ns, std::move(tp_cfg));
+    return process_create_cmd(
+      std::move(tp_ns), std::move(cmd), std::move(units));
 }
 
 ss::future<std::vector<topic_result>> topics_frontend::dispatch_delete_topics(
