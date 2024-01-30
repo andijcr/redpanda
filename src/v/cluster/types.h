@@ -51,6 +51,12 @@
 #include <optional>
 #include <vector>
 
+// forward declare cloud_storage::partition_manifest: it's used in a map in
+// topic_configuration_with_manifests
+namespace cloud_storage {
+struct partition_manifest;
+}
+
 namespace cluster {
 using consensus_ptr = ss::lw_shared_ptr<raft::consensus>;
 
@@ -2145,6 +2151,21 @@ struct topic_lifecycle_transition
 
 using topic_configuration_assignment
   = configuration_with_assignment<topic_configuration>;
+
+// struct used in create_topic_with_manifests, it includes a map of
+// partition_manifests that has been validated and are ready to be used to
+// create their respective partitions
+struct topic_configuration_with_manifests
+  : serde::envelope<
+      topic_configuration_with_manifests,
+      serde::version<0>,
+      serde::compat_version<0>> {
+    topic_configuration_assignment cfg;
+    absl::node_hash_map<model::partition_id, cloud_storage::partition_manifest>
+      manifests;
+
+    auto serde_fields() { return std::tie(cfg, manifests); }
+};
 
 struct topic_result
   : serde::envelope<topic_result, serde::version<0>, serde::compat_version<0>> {

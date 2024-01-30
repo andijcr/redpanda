@@ -100,7 +100,9 @@ static constexpr int8_t force_partition_reconfiguration_type = 11;
 static constexpr int8_t update_partition_replicas_cmd_type = 12;
 static constexpr int8_t set_topic_partitions_disabled_cmd_type = 13;
 static constexpr int8_t bulk_force_reconfiguration_cmd_type = 14;
+static constexpr int8_t create_topic_with_manifests_cmd_type = 15;
 
+// user and acl commands
 static constexpr int8_t create_user_cmd_type = 5;
 static constexpr int8_t delete_user_cmd_type = 6;
 static constexpr int8_t update_user_cmd_type = 7;
@@ -146,6 +148,13 @@ using create_topic_cmd = controller_command<
   create_topic_cmd_type,
   model::record_batch_type::topic_management_cmd,
   serde_opts::adl_and_serde>;
+
+using create_topic_with_manifests_cmd = controller_command<
+  model::topic_namespace,
+  topic_configuration_with_manifests,
+  create_topic_with_manifests_cmd_type,
+  model::record_batch_type::topic_management_cmd,
+  serde_opts::serde_only>;
 
 using delete_topic_cmd = controller_command<
   model::topic_namespace,

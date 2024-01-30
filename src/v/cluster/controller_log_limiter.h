@@ -74,10 +74,11 @@ public:
             return true;
         }
         if constexpr (
-          std::is_same_v<Cmd, create_topic_cmd> ||            //
-          std::is_same_v<Cmd, delete_topic_cmd> ||            //
-          std::is_same_v<Cmd, update_topic_properties_cmd> || //
-          std::is_same_v<Cmd, create_partition_cmd> ||        //
+          std::is_same_v<Cmd, create_topic_cmd> ||                //
+          std::is_same_v<Cmd, create_topic_with_manifests_cmd> || //
+          std::is_same_v<Cmd, delete_topic_cmd> ||                //
+          std::is_same_v<Cmd, update_topic_properties_cmd> ||     //
+          std::is_same_v<Cmd, create_partition_cmd> ||            //
           std::is_same_v<Cmd, set_topic_partitions_disabled_cmd>) {
             return _topic_operations_limiter.try_throttle();
         } else if constexpr (
