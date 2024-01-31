@@ -515,6 +515,7 @@ ss::future<topic_result> topics_frontend::replicate_create_topic(
         std::ranges::shuffle(p_as.replicas, random_generators::internal::gen);
     }
 
+    // replicate cmd and flatten results and errors into topic_result
     auto process_create_cmd = [&](auto tp_ns, auto cmd, auto units) {
         return replicate_and_wait(_stm, _as, std::move(cmd), timeout)
           .then_wrapped([tp_ns = std::move(tp_ns), units = std::move(units)](
@@ -534,15 +535,17 @@ ss::future<topic_result> topics_frontend::replicate_create_topic(
     };
 
     if (
-      tp_cfg.cfg.is_recovery_enabled()
-      && _features.local().get_active_version()
-           >= _features.local().get_latest_logical_version()) {
+      !tp_cfg.cfg.is_recovery_enabled()
+      || !_features.local().is_active(
+        features::feature::topic_recovery_validation)) {
+        create_topic_cmd cmd(tp_ns, std::move(tp_cfg));
+        return process_create_cmd(
+          std::move(tp_ns), std::move(cmd), std::move(units));
+    } else {
         auto cmd = create_topic_with_manifests_cmd{
           tp_ns, {.cfg = std::move(tp_cfg), .manifests = {}}};
-        return process_replicate_cmd(std::move(cmd));
-    } else {
-        create_topic_cmd cmd(tp_ns, std::move(tp_cfg));
-        return process_replicate_cmd(std::move(cmd));
+        return process_create_cmd(
+          std::move(tp_ns), std::move(cmd), std::move(units));
     }
 }
 
