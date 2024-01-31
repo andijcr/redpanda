@@ -73,6 +73,7 @@ enum class feature : std::uint64_t {
     disabling_partitions = 1ULL << 39U,
     cloud_metadata_cluster_recovery = 1ULL << 40U,
     audit_logging = 1ULL << 41U,
+    topic_recovery_validation = 1ULL << 42U,
 
     // Dummy features for testing only
     test_alpha = 1ULL << 61U,
@@ -363,7 +364,14 @@ constexpr static std::array feature_schema{
     "audit_logging",
     feature::audit_logging,
     feature_spec::available_policy::always,
-    feature_spec::prepare_policy::always}};
+    feature_spec::prepare_policy::always},
+  feature_spec{
+    cluster::cluster_version{12},
+    "topic_recovery_validation",
+    feature::topic_recovery_validation,
+    feature_spec::available_policy::always,
+    feature_spec::prepare_policy::always},
+};
 
 std::string_view to_string_view(feature);
 std::string_view to_string_view(feature_state::state);

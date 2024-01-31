@@ -533,9 +533,17 @@ ss::future<topic_result> topics_frontend::replicate_create_topic(
           });
     };
 
-    create_topic_cmd cmd(tp_ns, std::move(tp_cfg));
-    return process_create_cmd(
-      std::move(tp_ns), std::move(cmd), std::move(units));
+    if (
+      tp_cfg.cfg.is_recovery_enabled()
+      && _features.local().get_active_version()
+           >= _features.local().get_latest_logical_version()) {
+        auto cmd = create_topic_with_manifests_cmd{
+          tp_ns, {.cfg = std::move(tp_cfg), .manifests = {}}};
+        return process_replicate_cmd(std::move(cmd));
+    } else {
+        create_topic_cmd cmd(tp_ns, std::move(tp_cfg));
+        return process_replicate_cmd(std::move(cmd));
+    }
 }
 
 ss::future<std::vector<topic_result>> topics_frontend::dispatch_delete_topics(

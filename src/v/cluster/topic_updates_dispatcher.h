@@ -75,7 +75,8 @@ public:
       force_partition_reconfiguration_cmd,
       update_partition_replicas_cmd,
       set_topic_partitions_disabled_cmd,
-      bulk_force_reconfiguration_cmd>();
+      bulk_force_reconfiguration_cmd,
+      create_topic_with_manifests_cmd>();
 
     bool is_batch_applicable(const model::record_batch& batch) const {
         return batch.header().type
