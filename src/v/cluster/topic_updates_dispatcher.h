@@ -113,6 +113,8 @@ private:
       apply(set_topic_partitions_disabled_cmd, model::offset);
     ss::future<std::error_code>
       apply(bulk_force_reconfiguration_cmd, model::offset);
+    ss::future<std::error_code>
+      apply(create_topic_with_manifests_cmd, model::offset);
 
     using ntp_leader = std::pair<model::ntp, model::node_id>;
 

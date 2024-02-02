@@ -100,6 +100,60 @@ topic_table::apply(create_topic_cmd cmd, model::offset offset) {
     return ss::make_ready_future<std::error_code>(errc::success);
 }
 
+ss::future<std::error_code>
+topic_table::apply(create_topic_with_manifests_cmd cmd, model::offset offset) {
+    _last_applied_revision_id = model::revision_id(offset);
+    if (_topics.contains(cmd.key)) {
+        // topic already exists
+        return ss::make_ready_future<std::error_code>(
+          errc::topic_already_exists);
+    }
+
+    if (!schema_id_validation_validator::is_valid(cmd.value.cfg.cfg.properties)) {
+        return ss::make_ready_future<std::error_code>(
+          schema_id_validation_validator::ec);
+    }
+
+    // TODO assert value and == manifest_remote_revision
+    std::optional<model::initial_revision_id> remote_revision
+      = cmd.value.cfg.cfg.properties.remote_topic_properties ? std::make_optional(
+          cmd.value.cfg.cfg.properties.remote_topic_properties->remote_revision)
+                                                         : std::nullopt;
+    auto md = topic_metadata_item{
+      .metadata = topic_metadata(
+        std::move(cmd.value), model::revision_id(offset()), remote_revision)};
+    // calculate delta
+    md.partitions.reserve(cmd.value.assignments.size());
+    auto rev_id = model::revision_id{offset};
+    for (auto& pas : md.get_assignments()) {
+        auto ntp = model::ntp(cmd.key.ns, cmd.key.tp, pas.id);
+        replicas_revision_map replica_revisions;
+        _partition_count++;
+        for (auto& r : pas.replicas) {
+            replica_revisions[r.node_id] = rev_id;
+        }
+        md.partitions.emplace(
+          pas.id,
+          partition_meta{
+            .replicas_revisions = replica_revisions,
+            .last_update_finished_revision = rev_id});
+        _pending_deltas.emplace_back(
+          std::move(ntp),
+          model::revision_id(offset),
+          topic_table_delta_type::added);
+    }
+
+    _topics.insert({
+      cmd.key,
+      std::move(md),
+    });
+    _topics_map_revision++;
+    notify_waiters();
+
+    _probe.handle_topic_creation(std::move(cmd.key));
+    return ss::make_ready_future<std::error_code>(errc::success);
+}
+
 ss::future<> topic_table::stop() {
     for (auto& w : _waiters) {
         w->promise.set_exception(ss::abort_requested_exception());

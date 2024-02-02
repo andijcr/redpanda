@@ -327,6 +327,8 @@ public:
       apply(set_topic_partitions_disabled_cmd, model::offset);
     ss::future<std::error_code>
       apply(bulk_force_reconfiguration_cmd, model::offset);
+    ss::future<std::error_code>
+    apply(create_topic_with_manifests_cmd, model::offset);
 
     ss::future<> fill_snapshot(controller_snapshot&) const;
     ss::future<>

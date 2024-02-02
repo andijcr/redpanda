@@ -23,4 +23,16 @@ SEASTAR_THREAD_TEST_CASE(test_segment_size_jitter_calculation) {
             BOOST_REQUIRE_LE(new_sz, 1.05f * original_size);
         }
     }
+
+    auto cb = ss::circular_buffer<int>{};
+    auto rs = std::ranges::subrange{cb.begin(), cb.end()};
 };
+
+static_assert(std::weakly_incrementable<ss::circular_buffer<int>::iterator>);
+static_assert(
+  std::weakly_incrementable<ss::circular_buffer<int>::const_iterator>);
+static_assert(std::sentinel_for<
+              ss::circular_buffer<int>::iterator,
+              ss::circular_buffer<int>::iterator>);
+static_assert(std::ranges::range<ss::circular_buffer<int>>);
+static_assert(std::ranges::range<ss::circular_buffer<const int>>);

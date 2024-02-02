@@ -137,6 +137,29 @@ ss::future<std::error_code> topic_updates_dispatcher::apply(
     co_return ec;
 }
 
+ss::future<std::error_code> topic_updates_dispatcher::apply(
+  create_topic_with_manifests_cmd command, model::offset offset) {
+    auto tp_ns = command.key;
+    auto assignments = ss::chunked_fifo<partition_assignment>{};
+    for (auto& pa : command.value.cfg.assignments) {
+        assignments.push_back(pa);
+    }
+    auto ec = co_await dispatch_updates_to_cores(std::move(command), offset);
+    if (ec != errc::success) {
+        co_return ec;
+    }
+
+    // TODO merge this with apply(create_topic_cmd)
+    add_allocations_for_new_partitions(
+      assignments, get_allocation_domain(tp_ns));
+    for (const auto& p_as : assignments) {
+        _partition_balancer_state.local().handle_ntp_move_begin_or_cancel(
+          tp_ns.ns, tp_ns.tp, p_as.id, {}, p_as.replicas);
+        co_await ss::coroutine::maybe_yield();
+    }
+
+    co_return errc::success;
+}
 ss::future<std::error_code>
 topic_updates_dispatcher::apply(delete_topic_cmd cmd, model::offset offset) {
     // Legacy delete commands never create tombstones, so revision
@@ -514,7 +537,7 @@ topic_updates_dispatcher::dispatch_updates_to_cores(Cmd cmd, model::offset o) {
     auto results = co_await ssx::parallel_transform(
       boost::irange<ss::shard_id>(0, ss::smp::count),
       [this, cmd = std::move(cmd), o](ss::shard_id shard) mutable {
-          return do_apply(shard, cmd, _topic_table, o);
+          return do_apply(shard, std::move(cmd), _topic_table, o);
       });
 
     vassert(

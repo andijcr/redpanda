@@ -97,6 +97,8 @@ std::string_view to_string_view(feature f) {
         return "cloud_metadata_cluster_recovery";
     case feature::audit_logging:
         return "audit_logging";
+    case feature::topic_recovery_validation:
+        return "topic_recovery_validation";
 
     /*
      * testing features

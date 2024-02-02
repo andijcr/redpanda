@@ -51,12 +51,6 @@
 #include <optional>
 #include <vector>
 
-// forward declare cloud_storage::partition_manifest: it's used in a map in
-// topic_configuration_with_manifests
-namespace cloud_storage {
-struct partition_manifest;
-}
-
 namespace cluster {
 using consensus_ptr = ss::lw_shared_ptr<raft::consensus>;
 
@@ -2161,7 +2155,8 @@ struct topic_configuration_with_manifests
       serde::version<0>,
       serde::compat_version<0>> {
     topic_configuration_assignment cfg;
-    absl::node_hash_map<model::partition_id, cloud_storage::partition_manifest>
+    // it is expected that iobuf will contain a proper partition_manifest, since we control input. partition_manifest is not directly a serde struct,so we store the serialized form here
+    absl::node_hash_map<model::partition_id, iobuf>
       manifests;
 
     auto serde_fields() { return std::tie(cfg, manifests); }
