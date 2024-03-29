@@ -254,6 +254,12 @@ maybe_validate_recovery_topic(
           cluster_default);
     }();
 
+    if (checks.mode == model::recovery_validation_mode::no_check) {
+        // skip validation, return an empty map. this is interpreted as "no
+        // failures"
+        co_return absl::flat_hash_map<model::partition_id, validation_result>{};
+    }
+
     vlog(
       clusterlog.info,
       "Performing validation {} on topic {} with {} partitions",
@@ -276,11 +282,6 @@ maybe_validate_recovery_topic(
         return absl::flat_hash_map<model::partition_id, validation_result>{
           init.begin(), init.end()};
     }();
-
-    if (checks.mode == model::recovery_validation_mode::no_check) {
-        // skip validation
-        co_return std::move(results);
-    }
 
     auto [ns, topic] = assignable_config.cfg.tp_ns;
 
