@@ -284,11 +284,11 @@ class DescribeTopicsTest(RedpandaTest):
             self.logger.debug(
                 f"name: {name}, type: {config_type}, value: {value}, src: {source_type}"
             )
-            assert name in properties
+            assert name in properties, f"Unknown property {name}"
             prop = properties[name]
-            assert config_type == prop.config_type
-            assert value == prop.value
-            assert source_type == prop.source_type
+            assert config_type == prop.config_type, f"{config_type=} differs from expected {prop.config_type}"
+            assert value == prop.value, f"{value=} differs from expected {prop.value}"
+            assert source_type == prop.source_type, f"{source_type=} differs from expected {prop.source_type}"
 
         # The first empty line is where the table ends and the doc section begins
         assert last_pos is not None, "Something went wrong with property match"
