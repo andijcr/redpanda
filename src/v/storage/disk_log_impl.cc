@@ -773,6 +773,8 @@ ss::future<bool> disk_log_impl::sliding_window_compact(
 
         seg->mark_as_finished_windowed_compaction();
         _probe->segment_compacted();
+        _probe->add_compacted_away_bytes(size_before - size_after);
+
         compaction_result res(size_before, size_after);
         _compaction_ratio.update(res.compaction_ratio());
         seg->advance_generation();
