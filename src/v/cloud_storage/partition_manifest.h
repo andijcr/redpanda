@@ -596,7 +596,11 @@ private:
 
     void set_start_offset(model::offset start_offset);
 
-    void subtract_from_cloud_log_size(size_t to_subtract);
+    // subtracts the specified number of bytes from the cloud log size, making
+    // sure to not underflow cloud_log_size. returns the amount that was
+    // actually subtracted. under normal circumstances it should be equal to the
+    // input.
+    size_t subtract_from_cloud_log_size(size_t to_subtract);
 
     // Computes the size in bytes of all segments available to clients
     // (i.e. all segments after and including the segment that starts at

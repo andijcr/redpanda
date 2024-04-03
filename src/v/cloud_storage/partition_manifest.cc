@@ -575,16 +575,19 @@ void partition_manifest::disable_permanently() {
     _last_uploaded_compacted_offset = model::offset::max();
 }
 
-void partition_manifest::subtract_from_cloud_log_size(size_t to_subtract) {
+size_t partition_manifest::subtract_from_cloud_log_size(size_t to_subtract) {
     if (to_subtract > _cloud_log_size_bytes) {
         vlog(
           cst_log.warn,
           "Invalid attempt to subtract from cloud log size of {}. Setting it "
           "to 0 to prevent underflow",
           _ntp);
+        auto prev_sz = _cloud_log_size_bytes;
         _cloud_log_size_bytes = 0;
+        return prev_sz;
     } else {
         _cloud_log_size_bytes -= to_subtract;
+        return to_subtract;
     }
 }
 
