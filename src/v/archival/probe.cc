@@ -130,6 +130,13 @@ void ntp_level_probe::setup_public_metrics(const model::ntp& ntp) {
          sm::description(
            "Total size in bytes of the user-visible log for the topic"),
          labels)
+         .aggregate(aggregate_labels),
+       sm::make_gauge(
+         "compacted_away_cloud_bytes",
+         [this] { return _compacted_away_cloud_bytes; },
+         sm::description("Bytes removed due to compaction since this replica "
+                         "become leader for this partition"),
+         labels)
          .aggregate(aggregate_labels)});
 }
 
