@@ -942,8 +942,17 @@ bool partition_manifest::add(segment_meta meta) {
           meta.committed_offset, _last_uploaded_compacted_offset);
     }
 
-    subtract_from_cloud_log_size(total_replaced_size.value());
+    auto subtracted = subtract_from_cloud_log_size(total_replaced_size.value());
     _cloud_log_size_bytes += meta.size_bytes;
+
+    if (subtracted > meta.size_bytes) {
+        // if the replaced size is greater than the new size, it's a replace
+        // operation that substitute a run of segments with a (optionally)
+        // compacted single segment. compute how many bytes are removed with
+        // this add() operation. it's size-before - size-after
+        auto size_diff = subtracted - meta.size_bytes;
+        _compacted_away_cloud_bytes += size_diff;
+    }
     return true;
 }
 
@@ -2732,6 +2741,9 @@ void partition_manifest::from_iobuf(iobuf in) {
     // `_start_offset` can be modified in the above so invalidate
     // the dependent cached value.
     _cached_start_kafka_offset_local = std::nullopt;
+
+    // this field is not serialized, reset it to zero
+    _compacted_away_cloud_bytes = 0;
 }
 
 void partition_manifest::process_anomalies(

@@ -530,7 +530,8 @@ public:
     }
 
     auto serde_fields() {
-        // this list excludes _mem_tracker, which is not serialized
+        // this list excludes _mem_tracker, and _compacted_away_cloud_bytes
+        // which are not serialized
         return std::tie(
           _ntp,
           _rev,
@@ -553,7 +554,8 @@ public:
           _applied_offset);
     }
     auto serde_fields() const {
-        // this list excludes _mem_tracker, which is not serialized
+        // this list excludes _mem_tracker, and _compacted_away_cloud_bytes
+        // which are not serialized
         return std::tie(
           _ntp,
           _rev,
@@ -590,6 +592,12 @@ public:
       std::optional<model::offset> last_scrubbed_offset,
       scrub_status status,
       anomalies detected);
+
+    /// Returns the cloud_bytes removed by compaction operation since the start
+    /// of this manifest (when it was created or hydrated)
+    size_t get_compacted_away_cloud_bytes() const {
+        return _compacted_away_cloud_bytes;
+    }
 
 private:
     std::optional<kafka::offset> compute_start_kafka_offset_local() const;
@@ -702,6 +710,16 @@ private:
     // insync offset is incremented after processing every batch (even if it's
     // skipped by the STM).
     model::offset _applied_offset;
+
+    /** the following fields are not serialized as of v24.1 **/
+
+    // Keeps track of how many bytes are compacted away in cloud_storage.
+    // This value is updated every time a new add(segment_meta) replaces some
+    // segments. It is not persisted because it's used only to observe cloud
+    // storage behavior. It is expected that this value does not decrease,
+    // except when recreating the manifest. a decreasing value would indicate a
+    // change in behavior (or a bug) in user of the add(segment_meta) operation.
+    size_t _compacted_away_cloud_bytes{0};
 };
 
 } // namespace cloud_storage
