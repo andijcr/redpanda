@@ -919,7 +919,8 @@ std::optional<size_t> partition_manifest::move_aligned_offset_range(
     return total_replaced_size;
 }
 
-size_t partition_manifest::add(segment_meta meta) {
+std::optional<partition_manifest::add_segment_meta_result>
+partition_manifest::add(segment_meta meta) {
     if (_start_offset == model::offset{} && _segments.empty()) {
         // This can happen if this is the first time we add something
         // to the manifest or if all data was removed previously.
@@ -928,7 +929,7 @@ size_t partition_manifest::add(segment_meta meta) {
     const auto total_replaced_size = move_aligned_offset_range(meta);
 
     if (!total_replaced_size) {
-        return false;
+        return std::nullopt;
     }
 
     if (meta.ntp_revision == model::initial_revision_id{}) {
@@ -953,11 +954,12 @@ size_t partition_manifest::add(segment_meta meta) {
         auto size_diff = subtracted - meta.size_bytes;
         _compacted_away_cloud_bytes += size_diff;
     }
-    return true;
+    return add_segment_meta_result{
+      .bytes_before = subtracted, .bytes_after = meta.size_bytes};
 }
 
-size_t partition_manifest::add(
-  const segment_name& name, const segment_meta& meta) {
+std::optional<partition_manifest::add_segment_meta_result>
+partition_manifest::add(const segment_name& name, const segment_meta& meta) {
     if (meta.segment_term != model::term_id{}) {
         return add(meta);
     }

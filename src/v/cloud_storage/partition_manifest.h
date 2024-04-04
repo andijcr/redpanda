@@ -343,9 +343,18 @@ public:
     bool segment_with_offset_range_exists(
       model::offset base, model::offset committed) const;
 
+    struct add_segment_meta_result {
+        // size in bytes of the segment(s) that has been replaced by this
+        // operation (might be 0 for appends)
+        size_t bytes_before{};
+        // size in bytes of the segment referenced by the input segment_meta
+        size_t bytes_after{};
+    };
+
     /// Add new segment to the manifest
-    size_t add(segment_meta meta);
-    size_t add(const segment_name& name, const segment_meta& meta);
+    std::optional<add_segment_meta_result> add(segment_meta meta);
+    std::optional<add_segment_meta_result>
+    add(const segment_name& name, const segment_meta& meta);
 
     /// Return 'true' if the segment meta can be added safely
     bool safe_segment_meta_to_add(const segment_meta& meta) const;
