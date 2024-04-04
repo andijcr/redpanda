@@ -1069,8 +1069,8 @@ ss::future<cloud_storage::upload_result> ntp_archiver::upload_manifest(
 
     // now that manifest() is updated in cloud, updated the
     // compacted_away_cloud_bytes metric
-    _probe->compacted_away_cloud_bytes(
-      manifest().get_compacted_away_cloud_bytes());
+    _probe->compacted_replaced_bytes(
+      _parent.archival_meta_stm()->get_compacted_replaced_bytes());
 
     if (result == cloud_storage::upload_result::success) {
         _last_manifest_upload_time = ss::lowres_clock::now();
