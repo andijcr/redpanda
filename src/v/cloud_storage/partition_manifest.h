@@ -344,8 +344,8 @@ public:
       model::offset base, model::offset committed) const;
 
     /// Add new segment to the manifest
-    bool add(segment_meta meta);
-    bool add(const segment_name& name, const segment_meta& meta);
+    size_t add(segment_meta meta);
+    size_t add(const segment_name& name, const segment_meta& meta);
 
     /// Return 'true' if the segment meta can be added safely
     bool safe_segment_meta_to_add(const segment_meta& meta) const;

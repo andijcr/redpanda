@@ -919,7 +919,7 @@ std::optional<size_t> partition_manifest::move_aligned_offset_range(
     return total_replaced_size;
 }
 
-bool partition_manifest::add(segment_meta meta) {
+size_t partition_manifest::add(segment_meta meta) {
     if (_start_offset == model::offset{} && _segments.empty()) {
         // This can happen if this is the first time we add something
         // to the manifest or if all data was removed previously.
@@ -956,7 +956,7 @@ bool partition_manifest::add(segment_meta meta) {
     return true;
 }
 
-bool partition_manifest::add(
+size_t partition_manifest::add(
   const segment_name& name, const segment_meta& meta) {
     if (meta.segment_term != model::term_id{}) {
         return add(meta);
