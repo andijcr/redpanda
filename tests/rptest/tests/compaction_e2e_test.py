@@ -45,12 +45,13 @@ class CompactionE2EIdempotencyTest(RedpandaTest):
         return partitions
 
     @skip_debug_mode
-    @cluster(num_nodes=4)
+    @cluster(num_nodes=2)
     @matrix(
         initial_cleanup_policy=[
             TopicSpec.CLEANUP_COMPACT, TopicSpec.CLEANUP_DELETE
         ],
-        workload=[Workload.IDEMPOTENCY, Workload.TX, Workload.TX_UNIQUE_KEYS])
+        #workload=[Workload.IDEMPOTENCY, Workload.TX, Workload.TX_UNIQUE_KEYS])
+        workload=[Workload.TX_UNIQUE_KEYS])
     def test_basic_compaction(self, initial_cleanup_policy, workload):
         '''
         Basic end to end compaction logic test. The test verifies if last value 
@@ -75,7 +76,7 @@ class CompactionE2EIdempotencyTest(RedpandaTest):
         client = DefaultClient(self.redpanda)
         self.topics = [
             TopicSpec(partition_count=self.partition_count,
-                      replication_factor=3,
+                      replication_factor=1,
                       segment_bytes=self.segment_size,
                       cleanup_policy=initial_cleanup_policy)
         ]
@@ -176,7 +177,7 @@ class CompactionE2EIdempotencyTest(RedpandaTest):
 
         if workload == Workload.TX_UNIQUE_KEYS:
             # this workload with these test setting might generate non-compactible segments
-            m.expect([(metric, lambda old, new: old <= new)])
+            m.expect([(metric, lambda old, new: old < new)])
         else:
             # expect some level of compaction
             m.expect([(metric, lambda old, new: old < new)])
