@@ -31,12 +31,15 @@ services:
     - redpanda-test
   azurite:
     container_name: azurite
+    command: azurite --oauth basic --cert /opt/redpanda/snakeoil.pem --key /opt/redpanda/snakeoil.key
     restart: always
     ports:
     - 10000:10000
     image: mcr.microsoft.com/azure-storage/azurite:3.25.0
     networks:
     - redpanda-test
+    volumes:
+    - /home/andrea/redpanda/redpanda:/opt/redpanda
   rp:
     image: vectorized/redpanda-test-node
     privileged: true
