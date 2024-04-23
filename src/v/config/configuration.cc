@@ -189,7 +189,7 @@ configuration::configuration()
         .needs_restart = needs_restart::yes,
         .example = std::to_string(25_MiB),
         .visibility = visibility::user,
-        .aliases = {"wasm_per_core_memory_reservation"},
+        .aliases = {{"wasm_per_core_memory_reservation"}},
       },
       20_MiB,
       {.min = 64_KiB, .max = 100_GiB})
@@ -205,7 +205,7 @@ configuration::configuration()
         .needs_restart = needs_restart::yes,
         .example = std::to_string(5_MiB),
         .visibility = visibility::user,
-        .aliases = {"wasm_per_function_memory_limit"},
+        .aliases = {{"wasm_per_function_memory_limit"}},
       },
       2_MiB,
       // WebAssembly uses 64KiB pages and has a 32bit address space
@@ -807,7 +807,7 @@ configuration::configuration()
       "delete segments older than this - default 1 week",
       {.needs_restart = needs_restart::no,
        .visibility = visibility::user,
-       .aliases = {"delete_retention_ms"}},
+       .aliases = {{"delete_retention_ms"}}},
       7 * 24h)
   , log_compaction_interval_ms(
       *this,
@@ -1993,7 +1993,7 @@ configuration::configuration()
       "waiting.",
       {.needs_restart = needs_restart::no,
        .visibility = visibility::tunable,
-       .aliases = {"cloud_storage_graceful_transfer_timeout"}},
+       .aliases = {{"cloud_storage_graceful_transfer_timeout"}}},
       5s)
   , cloud_storage_backend(
       *this,
@@ -2373,7 +2373,7 @@ configuration::configuration()
       "across Kafka consume requests and store a readahead buffer.",
       {.needs_restart = needs_restart::no,
        .visibility = visibility::tunable,
-       .aliases = {"cloud_storage_max_readers_per_shard"}},
+       .aliases = {{"cloud_storage_max_readers_per_shard"}}},
       std::nullopt)
   , cloud_storage_max_partition_readers_per_shard(
       *this,

@@ -63,6 +63,27 @@ using legacy_version = named_type<int64_t, struct legacy_version_tag>;
 
 std::string_view to_string_view(visibility v);
 
+struct alias_lifetime {
+    consteval alias_lifetime(
+      std::string_view name, size_t start_alias, size_t start_depr)
+      : name{name}
+      , start_alias{start_alias}
+      , start_depr{start_depr} {
+        if (start_alias >= start_depr) {
+            throw std::runtime_error("start_alias >= start_depr");
+        }
+    }
+
+    consteval alias_lifetime(std::string_view name, size_t start_alias)
+      : alias_lifetime{name, start_alias, std::numeric_limits<size_t>::max()} {}
+    consteval alias_lifetime(std::string_view name)
+      : alias_lifetime{name, 0} {}
+
+    std::string_view name;
+    size_t start_alias;
+    size_t start_depr;
+};
+
 class base_property {
 public:
     struct metadata {
@@ -74,7 +95,7 @@ public:
 
         // Aliases are used exclusively for input: all output (e.g. listing
         // configuration) uses the primary name of the property.
-        std::vector<std::string_view> aliases;
+        std::vector<alias_lifetime> aliases;
     };
 
     base_property(
@@ -90,9 +111,7 @@ public:
     bool needs_restart() const { return bool(_meta.needs_restart); }
     visibility get_visibility() const { return _meta.visibility; }
     bool is_secret() const { return bool(_meta.secret); }
-    const std::vector<std::string_view>& aliases() const {
-        return _meta.aliases;
-    }
+    const std::vector<alias_lifetime>& aliases() const { return _meta.aliases; }
 
     // this serializes the property value. a full configuration serialization is
     // performed in config_store::to_json where the json object key is taken
