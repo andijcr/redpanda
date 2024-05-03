@@ -109,6 +109,8 @@ std::string_view to_string_view(feature f) {
     /*
      * testing features
      */
+    case feature::test_zeroth:
+        return "__test_zeroth";
     case feature::test_alpha:
         return "__test_alpha";
     case feature::test_bravo:
@@ -174,6 +176,14 @@ static constexpr cluster_version earliest_version = cluster_version{9};
 // Extra features that will be wired into the feature table if a special
 // environment variable is set
 static std::array test_extra_schema{
+  // For testing, a feature that was introduced earlier than earliest_version
+  feature_spec{
+    cluster::cluster_version{0},
+    "__test_zeroth",
+    feature::test_zeroth,
+    feature_spec::available_policy::always,
+    feature_spec::prepare_policy::always,
+  },
   // For testing, a feature that does not auto-activate
   feature_spec{
     cluster::cluster_version{2001},

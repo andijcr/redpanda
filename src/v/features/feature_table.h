@@ -37,7 +37,10 @@ struct feature_table_snapshot;
 /// only used at runtime.  Therefore it is safe to re-use an integer that
 /// has been made available by another feature being retired.
 enum class feature : std::uint64_t {
-    serde_raft_0 = 1ULL << 5U,
+    // Dummy feature for testing only
+    test_zeroth = 0,
+
+    // features
     license = 1ULL << 6U,
     raft_improved_configuration = 1ULL << 7U,
     transaction_ga = 1ULL << 8U,
