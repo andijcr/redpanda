@@ -102,6 +102,7 @@ inline const std::unordered_set<std::string_view> retired_features = {
   "mtls_authentication",
   "rm_stm_kafka_cache",
   "transaction_ga",
+  "serde_raft_0",
 };
 
 /**
@@ -155,12 +156,6 @@ struct feature_spec {
 };
 
 constexpr static std::array feature_schema{
-  feature_spec{
-    cluster::cluster_version{5},
-    "serde_raft_0",
-    feature::serde_raft_0,
-    feature_spec::available_policy::always,
-    feature_spec::prepare_policy::always},
   feature_spec{
     cluster::cluster_version{5},
     "license",
