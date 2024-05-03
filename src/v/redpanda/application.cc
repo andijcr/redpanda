@@ -2503,9 +2503,6 @@ void application::wire_up_and_start(::stop_signal& app_signal, bool test_mode) {
     } else {
         // Only populate migrators in non-unit-test mode
         _migrators.push_back(
-          std::make_unique<features::migrators::cloud_storage_config>(
-            *controller));
-        _migrators.push_back(
           std::make_unique<features::migrators::rbac_migrator>(*controller));
     }
 

@@ -41,7 +41,6 @@ enum class feature : std::uint64_t {
     test_zeroth = 0,
 
     // features
-    cloud_retention = 1ULL << 11U,
     node_id_assignment = 1ULL << 12U,
     replication_factor_change = 1ULL << 13U,
     ephemeral_secrets = 1ULL << 14U,
@@ -102,6 +101,7 @@ inline const std::unordered_set<std::string_view> retired_features = {
   "raft_improved_configuration",
   "raftless_node_status",
   "rpc_v2_by_default",
+  "cloud_retention",
 };
 
 /**
@@ -155,12 +155,6 @@ struct feature_spec {
 };
 
 constexpr static std::array feature_schema{
-  feature_spec{
-    cluster::cluster_version{7},
-    "cloud_retention",
-    feature::cloud_retention,
-    feature_spec::available_policy::always,
-    feature_spec::prepare_policy::requires_migration},
   feature_spec{
     cluster::cluster_version{7},
     "node_id_assignment",

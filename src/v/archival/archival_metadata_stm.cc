@@ -1299,14 +1299,6 @@ model::offset archival_metadata_stm::max_collectible_offset() {
     bool collect_all = !_raft->log_config().is_archival_enabled();
     bool is_read_replica = _raft->log_config().is_read_replica_mode_enabled();
 
-    // In earlier versions, we should assume every topic is archival enabled
-    // if the global cloud_storage_enable_remote_write is true.
-    if (
-      !_feature_table.is_active(features::feature::cloud_retention)
-      && config::shard_local_cfg().cloud_storage_enable_remote_write()) {
-        collect_all = false;
-    }
-
     if (collect_all || is_read_replica) {
         // The archival is disabled but the state machine still exists so we
         // shouldn't stop eviction from happening.
