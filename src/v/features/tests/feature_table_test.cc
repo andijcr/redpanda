@@ -78,8 +78,6 @@ SEASTAR_THREAD_TEST_CASE(feature_table_test_hook_off) {
 
 SEASTAR_THREAD_TEST_CASE(feature_table_strings) {
     BOOST_REQUIRE_EQUAL(to_string_view(feature::test_alpha), mock_feature);
-    BOOST_REQUIRE_EQUAL(
-      to_string_view(feature::rpc_v2_by_default), "rpc_v2_by_default");
     BOOST_REQUIRE_EQUAL(to_string_view(feature::kafka_gssapi), "kafka_gssapi");
     BOOST_REQUIRE_EQUAL(
       to_string_view(feature::node_isolation), "node_isolation");

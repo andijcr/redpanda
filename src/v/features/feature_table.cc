@@ -25,8 +25,6 @@ namespace features {
 
 std::string_view to_string_view(feature f) {
     switch (f) {
-    case feature::rpc_v2_by_default:
-        return "rpc_v2_by_default";
     case feature::cloud_retention:
         return "cloud_retention";
     case feature::node_id_assignment:
