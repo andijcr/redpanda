@@ -25,8 +25,6 @@ namespace features {
 
 std::string_view to_string_view(feature f) {
     switch (f) {
-    case feature::license:
-        return "license";
     case feature::raft_improved_configuration:
         return "raft_improved_configuration";
     case feature::transaction_ga:

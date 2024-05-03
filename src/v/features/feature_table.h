@@ -41,7 +41,6 @@ enum class feature : std::uint64_t {
     test_zeroth = 0,
 
     // features
-    license = 1ULL << 6U,
     raft_improved_configuration = 1ULL << 7U,
     transaction_ga = 1ULL << 8U,
     raftless_node_status = 1ULL << 9U,
@@ -103,6 +102,7 @@ inline const std::unordered_set<std::string_view> retired_features = {
   "rm_stm_kafka_cache",
   "transaction_ga",
   "serde_raft_0",
+  "license",
 };
 
 /**
@@ -156,12 +156,6 @@ struct feature_spec {
 };
 
 constexpr static std::array feature_schema{
-  feature_spec{
-    cluster::cluster_version{5},
-    "license",
-    feature::license,
-    feature_spec::available_policy::always,
-    feature_spec::prepare_policy::always},
   feature_spec{
     cluster::cluster_version{5},
     "raft_improved_configuration",

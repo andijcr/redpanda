@@ -212,7 +212,11 @@ ss::future<> feature_manager::maybe_log_license_check_info() {
               interval_override);
         }
     }
-    if (_feature_table.local().is_active(features::feature::license)) {
+
+    {
+        // previously this block was gated behind is_active(feature::license),
+        // now always true
+
         const auto& cfg = config::shard_local_cfg();
         auto has_gssapi = [&cfg]() {
             return absl::c_any_of(cfg.sasl_mechanisms(), [](const auto& m) {
@@ -251,6 +255,7 @@ ss::future<> feature_manager::maybe_log_license_check_info() {
             }
         }
     }
+
     try {
         co_await ss::sleep_abortable(license_check_retry, _as.local());
     } catch (ss::sleep_aborted) {
