@@ -99,11 +99,7 @@ tm_stm::replicate_quorum_ack(model::term_id term, model::record_batch&& batch) {
 }
 
 model::record_batch tm_stm::serialize_tx(tm_transaction tx) {
-    if (use_new_tx_version()) {
-        return do_serialize_tx(tx);
-    }
-    auto old_tx = downgrade_tx(tx);
-    return do_serialize_tx(old_tx);
+    return do_serialize_tx(tx);
 }
 
 tm_stm::tm_stm(
@@ -225,10 +221,6 @@ tm_stm::quorum_write_empty_batch(model::timeout_clock::time_point timeout) {
 }
 
 ss::future<> tm_stm::checkpoint_ongoing_txs() {
-    if (!use_new_tx_version()) {
-        co_return;
-    }
-
     auto txes_to_checkpoint = _cache->checkpoint();
     size_t checkpointed_txes = 0;
     for (auto& tx : txes_to_checkpoint) {
@@ -406,10 +398,7 @@ ss::future<checked<tm_transaction, tm_stm::op_status>> tm_stm::mark_tx_prepared(
     }
     auto tx = tx_opt.value();
 
-    auto check_status = is_transaction_ga()
-                          ? tm_transaction::tx_status::ongoing
-                          : tm_transaction::tx_status::preparing;
-    if (tx.status != check_status) {
+    if (tx.status != tm_transaction::tx_status::ongoing) {
         vlog(
           _ctx_log.warn,
           "[tx_id={}] error marking transaction {} as prepared. Incorrect "
@@ -417,7 +406,7 @@ ss::future<checked<tm_transaction, tm_stm::op_status>> tm_stm::mark_tx_prepared(
           tx_id,
           tx,
           tx.status,
-          check_status);
+          tm_transaction::tx_status::ongoing);
         co_return tm_stm::op_status::conflict;
     }
     tx.status = cluster::tm_transaction::tx_status::prepared;
@@ -666,24 +655,6 @@ ss::future<tm_stm::op_status> tm_stm::add_partitions(
         co_return tm_stm::op_status::unknown;
     }
 
-    if (!is_transaction_ga()) {
-        bool just_started = tx.partitions.size() == 0 && tx.groups.size() == 0;
-
-        if (just_started) {
-            for (auto& partition : partitions) {
-                tx.partitions.push_back(partition);
-            }
-            tx.last_update_ts = clock_type::now();
-            auto r = co_await update_tx(tx, tx.etag);
-
-            if (!r.has_value()) {
-                co_return tm_stm::op_status::unknown;
-            }
-            _cache->set_mem(tx.etag, tx_id, tx);
-            co_return tm_stm::op_status::success;
-        }
-    }
-
     for (auto& partition : partitions) {
         tx.partitions.push_back(partition);
     }
@@ -729,23 +700,6 @@ ss::future<tm_stm::op_status> tm_stm::add_group(
           tx,
           expected_term);
         co_return tm_stm::op_status::unknown;
-    }
-
-    if (!is_transaction_ga()) {
-        bool just_started = tx.partitions.size() == 0 && tx.groups.size() == 0;
-
-        if (just_started) {
-            tx.groups.push_back(
-              tm_transaction::tx_group{.group_id = group_id, .etag = etag});
-            tx.last_update_ts = clock_type::now();
-            auto r = co_await update_tx(tx, tx.etag);
-
-            if (!r.has_value()) {
-                co_return tm_stm::op_status::unknown;
-            }
-            _cache->set_mem(tx.etag, tx_id, tx);
-            co_return tm_stm::op_status::success;
-        }
     }
 
     tx.groups.push_back(

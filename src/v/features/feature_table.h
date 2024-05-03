@@ -41,7 +41,6 @@ enum class feature : std::uint64_t {
     test_zeroth = 0,
 
     // features
-    transaction_ga = 1ULL << 8U,
     raftless_node_status = 1ULL << 9U,
     rpc_v2_by_default = 1ULL << 10U,
     cloud_retention = 1ULL << 11U,
@@ -156,12 +155,6 @@ struct feature_spec {
 };
 
 constexpr static std::array feature_schema{
-  feature_spec{
-    cluster::cluster_version{6},
-    "transaction_ga",
-    feature::transaction_ga,
-    feature_spec::available_policy::always,
-    feature_spec::prepare_policy::always},
   feature_spec{
     cluster::cluster_version{7},
     "raftless_node_status",

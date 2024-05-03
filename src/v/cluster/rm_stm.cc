@@ -276,10 +276,6 @@ rm_stm::rm_stm(
   , _producers(
       mt::map<absl::btree_map, model::producer_identity, cluster::producer_ptr>(
         _tx_root_tracker.create_child("producers"))) {
-    vassert(
-      _feature_table.local().is_active(features::feature::transaction_ga),
-      "unexpected state for transactions support. skipped a few "
-      "versions during upgrade?");
     setup_metrics();
     if (!_is_tx_enabled) {
         _is_autoabort_enabled = false;
