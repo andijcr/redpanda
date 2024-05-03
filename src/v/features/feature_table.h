@@ -41,7 +41,6 @@ enum class feature : std::uint64_t {
     test_zeroth = 0,
 
     // features
-    raft_improved_configuration = 1ULL << 7U,
     transaction_ga = 1ULL << 8U,
     raftless_node_status = 1ULL << 9U,
     rpc_v2_by_default = 1ULL << 10U,
@@ -103,6 +102,7 @@ inline const std::unordered_set<std::string_view> retired_features = {
   "transaction_ga",
   "serde_raft_0",
   "license",
+  "raft_improved_configuration",
 };
 
 /**
@@ -156,12 +156,6 @@ struct feature_spec {
 };
 
 constexpr static std::array feature_schema{
-  feature_spec{
-    cluster::cluster_version{5},
-    "raft_improved_configuration",
-    feature::raft_improved_configuration,
-    feature_spec::available_policy::always,
-    feature_spec::prepare_policy::always},
   feature_spec{
     cluster::cluster_version{6},
     "transaction_ga",
