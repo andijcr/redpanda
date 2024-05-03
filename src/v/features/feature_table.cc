@@ -169,7 +169,7 @@ static constexpr cluster_version latest_version = cluster_version{13};
 // - The new 23.1 node advances feature table to version 8 when it joins and
 //   sees controller log replay.
 // - Eventually once all nodes are 23.1, all nodes advance active version to 9
-static constexpr cluster_version earliest_version = cluster_version{7};
+static constexpr cluster_version earliest_version = cluster_version{9};
 
 // Extra features that will be wired into the feature table if a special
 // environment variable is set
