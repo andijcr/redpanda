@@ -344,6 +344,54 @@ class UpgradeWithWorkloadTest(EndToEndTest):
                             enable_idempotence=True)
 
 
+class UpgradeConfigAliasTest(RedpandaTest):
+    def setUp(self):
+        # skip setup, we will install a redpanda version in the test manually
+        pass
+
+    def _install(self, version, nodes: list | None = None):
+        self.redpanda._installer.install(nodes=nodes or self.redpanda.nodes,
+                                         version=version)
+
+    @cluster(num_nodes=3, log_allow_list=RESTART_LOG_ALLOW_LIST)
+    def test_rolling_upgrade_with_rollback(self):
+        """
+        Install a redpanda cluster with version before the change 
+        delete_retention_ms -> log_retention_ms (from primary name to alias),
+        perform a partial upgrade, set the property, revert the upgrade 
+        and check that the correct config value is still there.
+        """
+
+        pre_alias_version = (23, 2)
+        post_alias_version = (23, 3)
+
+        pre_value = 123456780
+        post_value = 999999
+
+        # start a pre_alias cluster
+        self._install(pre_alias_version)
+        self.redpanda.start(clean_nodes=True)
+        # set a value other than default
+        self.redpanda.set_cluster_config({'delete_retention_ms': pre_value})
+
+        # start rolling upgrade from a node
+        first_node_slice = self.redpanda.nodes[0:1]
+        self._install(post_alias_version, first_node_slice)
+        self.redpanda.rolling_restart_nodes(first_node_slice)
+
+        # midway set the property (the name now is an alias in the upgraded node)
+        self.redpanda.set_cluster_config({'delete_retention_ms': post_value})
+
+        # roll back the upgraded node, and check the config value there
+        self._install(pre_alias_version, first_node_slice)
+        self.redpanda.rolling_restart_nodes(first_node_slice)
+
+        val = Admin(self.redpanda).get_cluster_config(
+            node=first_node_slice[0])['delete_retention_ms']
+
+        assert val == post_value, f"{first_node_slice[0].name}: delete_retention_ms={val} but {post_value} was expected"
+
+
 class UpgradeFromPriorFeatureVersionCloudStorageTest(RedpandaTest):
     """
     Check that a mixed-version cluster does not run into issues with
