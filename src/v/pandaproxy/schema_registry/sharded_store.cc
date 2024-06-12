@@ -118,7 +118,7 @@ sharded_store::make_valid_schema(canonical_schema schema) {
         co_return co_await make_protobuf_schema_definition(*this, schema);
     }
     case schema_type::json:
-        break;
+        co_return co_await make_json_schema_definition(*this, schema);
     }
     throw as_exception(invalid_schema_type(schema.type()));
 }

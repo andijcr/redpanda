@@ -361,7 +361,8 @@ make_canonical_json_schema(sharded_store&, unparsed_schema def) {
 
 bool check_compatible(
   const json_schema_definition& reader, const json_schema_definition& writer) {
-    return check_compatible(reader().schema, writer().schema);
+    return is_stricter_or_equal(
+      newer_schema{&writer().doc}, older_schema{&reader().doc});
 }
 
 } // namespace pandaproxy::schema_registry

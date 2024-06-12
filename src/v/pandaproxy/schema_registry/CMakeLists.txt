@@ -21,6 +21,7 @@ v_cc_library(
     types.cc
     avro.cc
     json.cc
+    json_is_compatible.cc
     protobuf.cc
     validation.cc
     ${schema_registry_file}

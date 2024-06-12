@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "json/document.h"
 #include "pandaproxy/schema_registry/errors.h"
 #include "pandaproxy/schema_registry/fwd.h"
 #include "pandaproxy/schema_registry/types.h"
@@ -25,5 +26,13 @@ make_canonical_json_schema(sharded_store& store, unparsed_schema def);
 
 bool check_compatible(
   const json_schema_definition& reader, const json_schema_definition& writer);
+
+using newer_schema = named_type<json::Value const*, struct newer_schema_tag>;
+using older_schema = named_type<json::Value const*, struct older_schema_tag>;
+class json_schema_exception : public std::logic_error {};
+bool is_stricter_or_equal(newer_schema newer, older_schema older);
+
+ss::future<bool> check_compatible_in_the_weird_way(
+  json_schema_definition reader, json_schema_definition writer);
 
 } // namespace pandaproxy::schema_registry

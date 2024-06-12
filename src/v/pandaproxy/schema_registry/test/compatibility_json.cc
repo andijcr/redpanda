@@ -12,6 +12,7 @@
 #include "pandaproxy/schema_registry/types.h"
 
 #include <seastar/testing/thread_test_case.hh>
+#include <seastar/util/defer.hh>
 
 namespace {
 
@@ -23,7 +24,8 @@ constexpr std::string_view schema_1 = R"({
   "properties": {
     "foo": { "type": "string" },
     "bar": { "type": "string" }
-  }
+  },
+  "additionalProperties": true
 })";
 
 constexpr std::string_view schema_2 = R"({
@@ -39,7 +41,7 @@ bool check_compatible(
   const pps::canonical_schema_definition& r,
   const pps::canonical_schema_definition& w) {
     pps::sharded_store s;
-    return check_compatible(
+    return pandaproxy::schema_registry::check_compatible(
       pps::make_json_schema_definition(
         s, {pps::subject("r"), {r.raw(), pps::schema_type::json}})
         .get(),
@@ -52,5 +54,17 @@ bool check_compatible(
 SEASTAR_THREAD_TEST_CASE(test_json_parse) {
     pps::canonical_schema_definition s1{schema_1, pps::schema_type::json};
     pps::canonical_schema_definition s2{schema_2, pps::schema_type::json};
+    // reader is the new one
     BOOST_REQUIRE(check_compatible(s1, s2));
+}
+
+
+SEASTAR_THREAD_TEST_CASE(test_schema_parse){
+  auto store=pps::sharded_store();
+  store.start(pps::is_mutable::yes, ss::default_smp_service_group()).get();
+  auto stop_store = ss::defer([&store]() { store.stop().get(); });
+
+  
+  pps::make_canonical_json_schema(sharded_store &store, unparsed_schema def)  
+
 }
