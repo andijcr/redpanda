@@ -612,7 +612,7 @@ bool is_numeric_property_value_superset(
     return !older_value.has_value();
 }
 
-enum class additional_field_for { object, array };
+enum class additional_field_for { object, array, array_draft2019 };
 
 bool is_additional_superset(
   json::Value const& older,
@@ -634,6 +634,9 @@ bool is_additional_superset(
             return "additionalProperties";
         case additional_field_for::array:
             return "additionalItems";
+        case additional_field_for::array_draft2019:
+        // in draft2019 prefixItems is introduced and "items" takes the role of "additionalItems"
+        return "items";
         }
     }();
     // helper to parse additional__
@@ -650,7 +653,7 @@ bool is_additional_superset(
     };
 
     // poor man's case matching. this is an optimization in case both
-    // additionalProperties are boolean
+    // field_names are boolean
     return std::visit(
       ss::make_visitor(
         [](bool older, bool newer) {
@@ -834,9 +837,7 @@ bool is_array_superset(json::Value const& older, json::Value const& newer) {
     // for array, "items" is a schema that validates all the elements.
     // for tuple in Draft4, "items" is an array of schemas to validate the
     // tuple, and "additionalItems" a schema to validate extra elements.
-    // TODO in later drafts, tuple validation has "prefixItems" as array of
-    // schemas, "items" is for validation of extra elements, "additionalItems"
-    // is not used.
+    // for tuples from Draft2010, "prefixItems" is an array of schemas and "items" is a schema for extra elements.
     // This superset function has a common section for tuples and array, and
     // then is split based on array/tuple.
 
@@ -876,10 +877,21 @@ bool is_array_superset(json::Value const& older, json::Value const& newer) {
         return false;
     }
 
+    struct tuple_keywords{
+        
+        additional_field_for additional;
+    };
     // check if the input is an array schema or a tuple schema
     auto is_array = [](json::Value const& v) -> bool {
-        // TODO "prefixItems" is not in Draft4, it's from later drafts. if it's
+        // "prefixItems" is not in Draft4, it's from later drafts. if it's
         // present, it's a tuple schema
+        if(v.HasMember("prefixItems")){
+            if(v.HasMember("additionalItems")){
+                // TODO we don't have the information here of the draft used by the root schema, making this case ambiguous
+                throw as_exception(invalid_schema(fmt::format("{} includes both prefixItems and additionalItems", pj{v})));
+            }
+            return false;
+        }
         auto items_it = v.FindMember("items");
         // default for items is `{}` so it's not a tuple schema
         // v is a tuple schema if "items" is an array of schemas
